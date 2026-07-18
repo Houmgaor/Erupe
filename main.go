@@ -263,11 +263,12 @@ func main() {
 	logger.Info(fmt.Sprintf("Server Time: %s", gametime.Adjusted().String()))
 
 	// Warn if quest files are missing — clients crash without them.
-	questPath := filepath.Join(config.BinPath, "quests")
+	resolvedBinPath := config.ResolvedBinPath()
+	questPath := filepath.Join(resolvedBinPath, "quests")
 	if entries, err := os.ReadDir(questPath); err != nil || len(entries) == 0 {
 		logger.Warn("No quest files found in " + questPath)
-		logger.Warn("Download quest/scenario files from: https://files.catbox.moe/xf0l7w.7z")
-		logger.Warn("Extract into your BinPath directory (default: bin/)")
+		logger.Warn("Sync them with ./binsync, or download manually from: https://files.catbox.moe/xf0l7w.7z")
+		logger.Warn(fmt.Sprintf("Extract into your BinPath directory (currently resolved to: %s/)", resolvedBinPath))
 		logger.Warn("Without these files, quests will not load and clients will crash.")
 	}
 

@@ -1,6 +1,7 @@
 # 1. Copy config.example.json to docker/config.json and edit it
 #    (set Database.Host to "db", adjust password to match below)
-# 2. Place quest/scenario files in docker/bin/
+# 2. Place quest/scenario files in docker/game-data/ (or docker/bin/ if
+#    you're upgrading an existing install — both are mounted below)
 # 3. docker compose up
 services:
   db:
@@ -42,6 +43,7 @@ services:
     #   context: ../
     volumes:
       - ./config.json:/app/config.json
+      - ./game-data:/app/game-data
       - ./bin:/app/bin
       - ./savedata:/app/savedata
     ports:

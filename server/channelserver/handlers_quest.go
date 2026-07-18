@@ -121,7 +121,7 @@ func handleMsgSysGetFile(s *Session, p mhfpacket.MHFPacket) {
 			if errors.Is(err, errFileNotFound) {
 				msg = "Scenario file not found"
 			}
-			s.logger.Error(msg, zap.String("binPath", s.server.erupeConfig.BinPath), zap.String("filename", filename), zap.Error(err))
+			s.logger.Error(msg, zap.String("binPath", s.server.erupeConfig.ResolvedBinPath()), zap.String("filename", filename), zap.Error(err))
 			doAckBufFail(s, pkt.AckHandle, nil)
 			return
 		}
@@ -144,7 +144,7 @@ func handleMsgSysGetFile(s *Session, p mhfpacket.MHFPacket) {
 			if errors.Is(err, errFileNotFound) {
 				msg = "Quest file not found"
 			}
-			s.logger.Error(msg, zap.String("binPath", s.server.erupeConfig.BinPath), zap.String("filename", pkt.Filename), zap.Error(err))
+			s.logger.Error(msg, zap.String("binPath", s.server.erupeConfig.ResolvedBinPath()), zap.String("filename", pkt.Filename), zap.Error(err))
 			doAckBufFail(s, pkt.AckHandle, nil)
 			return
 		}
@@ -156,7 +156,7 @@ func handleMsgSysGetFile(s *Session, p mhfpacket.MHFPacket) {
 }
 
 func questFileExists(s *Session, filename string) bool {
-	base := filepath.Join(s.server.erupeConfig.BinPath, "quests", filename)
+	base := filepath.Join(s.server.erupeConfig.ResolvedBinPath(), "quests", filename)
 	if _, err := os.Stat(base + ".bin"); err == nil {
 		return true
 	}
@@ -167,7 +167,7 @@ func questFileExists(s *Session, filename string) bool {
 // loadQuestBinary loads a quest file by name, trying .bin first then .json.
 // For .json files it compiles the JSON to the MHF binary wire format.
 func loadQuestBinary(s *Session, filename string) ([]byte, error) {
-	base := filepath.Join(s.server.erupeConfig.BinPath, "quests", filename)
+	base := filepath.Join(s.server.erupeConfig.ResolvedBinPath(), "quests", filename)
 
 	if data, err := os.ReadFile(base + ".bin"); err == nil {
 		return data, nil
@@ -190,7 +190,7 @@ func loadQuestBinary(s *Session, filename string) ([]byte, error) {
 // loadScenarioBinary loads a scenario file by name, trying .bin first then .json.
 // For .json files it compiles the JSON to the MHF binary wire format.
 func loadScenarioBinary(s *Session, filename string) ([]byte, error) {
-	base := filepath.Join(s.server.erupeConfig.BinPath, "scenarios", filename)
+	base := filepath.Join(s.server.erupeConfig.ResolvedBinPath(), "scenarios", filename)
 
 	if data, err := os.ReadFile(base + ".bin"); err == nil {
 		return data, nil
@@ -275,7 +275,7 @@ func loadQuestFile(s *Session, questId int) []byte {
 		return cached
 	}
 
-	base := filepath.Join(s.server.erupeConfig.BinPath, fmt.Sprintf("quests/%05dd0", questId))
+	base := filepath.Join(s.server.erupeConfig.ResolvedBinPath(), fmt.Sprintf("quests/%05dd0", questId))
 	var decrypted []byte
 	if data, err := os.ReadFile(base + ".bin"); err == nil {
 		decrypted = decryption.UnpackSimple(data)

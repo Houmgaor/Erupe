@@ -36,11 +36,11 @@ Pick one of two installation methods, then continue to [Quest & Scenario Files](
 
    If you're using File Explorer or the likes, rename or create a copy of `config.example.json` titled `config.json` and fill it out with your database credentials.
 
-4. Download [quest/scenario files](#quest--scenario-files) and extract them to `bin/`.
+4. Get [quest/scenario files](#quest--scenario-files) into `game-data/` (or `bin/` if you're upgrading an existing install).
 
    It should look as follows:
    ```
-   bin
+   game-data
    ├───events
    │   ├───Campaign
    │   ├───Collab
@@ -88,27 +88,43 @@ Requires [Go 1.25+](https://go.dev/dl/) and [PostgreSQL](https://www.postgresql.
    cp config.example.json config.json
    ```
 
-4. Download [quest/scenario files](#quest--scenario-files) and extract them to `bin/`
+4. Get [quest/scenario files](#quest--scenario-files) into `game-data/`
 
 5. Run: `./erupe-ce`
 
 ## Quest & Scenario Files
 
+These files contain quest definitions, scenario data, and Hunting Road (`rengoku`) config that the server sends to clients during gameplay. **Without them, quests will not load and the client will crash.**
+
+### Option A: Sync (recommended)
+
+Download `binsync` from [GitHub Releases](https://github.com/Mezeporta/Erupe/releases/latest) alongside the server binary, then:
+
+```bash
+./binsync --manifest-url https://data.mogapedia.fr/erupe/manifest.json
+```
+
+This downloads and installs quest/scenario/road data into `game-data/` (or `docker/game-data/` for Docker installs), verifying each file's hash and content before installing it — see [`docs/binsync-format.md`](docs/binsync-format.md) for how. The same action is available as a "Sync Now" button in the setup wizard's Quest Files step. Re-run it any time to pick up corrections — it only downloads what changed.
+
+### Option B: Manual download
+
 **Download**: [Quest and Scenario Binary Files](https://files.catbox.moe/xf0l7w.7z)
 
-These files contain quest definitions and scenario data that the server sends to clients during gameplay. Extract the archive into your `bin/` directory (or `docker/bin/` for Docker installs). The path must match the `BinPath` setting in your config (default: `"bin"`).
+Extract the archive into your `game-data/` directory (or `bin/` if you're upgrading an existing install — both work, see below). The path must match the `BinPath` setting in your config (default: auto-detected, see [`docs/binsync-format.md`](docs/binsync-format.md#the-game-databin-directory-rename)).
 
-**Without these files, quests will not load and the client will crash.**
+### The `game-data`/`bin` rename
+
+The data directory used to be called `bin/` — a name that predates JSON support below and no longer describes what's actually stored there. New installs default to `game-data/`; existing installs with a populated `bin/` directory keep working automatically, with no config changes needed.
 
 ### JSON Format Support
 
-As an alternative to opaque `.bin` files, Erupe supports human-readable `.json` files for quests, scenarios, and Hunting Road config. The server always tries `.bin` first and falls back to `.json` automatically — existing binary files work unchanged.
+As an alternative to opaque `.bin` files, Erupe supports human-readable `.json` files for quests, scenarios, and Hunting Road config. The server always tries `.bin` first and falls back to `.json` automatically — existing binary files work unchanged. This is the format `binsync` distributes.
 
 | File type | Location | Documentation |
 |-----------|----------|---------------|
-| Quest | `bin/quests/<name>.json` | Erupe wiki |
-| Scenario | `bin/scenarios/<name>.json` | `docs/scenario-format.md` |
-| Hunting Road | `bin/rengoku_data.json` | Erupe wiki |
+| Quest | `game-data/quests/<name>.json` | Erupe wiki |
+| Scenario | `game-data/scenarios/<name>.json` | `docs/scenario-format.md` |
+| Hunting Road | `game-data/rengoku_data.json` | Erupe wiki |
 
 JSON quests and scenarios use UTF-8 text (converted to Shift-JIS on the wire), making them diff-friendly and editable without binary tools.
 
@@ -139,7 +155,6 @@ Edit `config.json` before starting the server. The essential settings are:
 ```json
 {
   "Host": "127.0.0.1",
-  "BinPath": "bin",
   "Language": "en",
   "ClientMode": "ZZ",
   "Database": {
@@ -156,7 +171,7 @@ Edit `config.json` before starting the server. The essential settings are:
 |---------|-------------|
 | `Host` | IP advertised to clients. Use `127.0.0.1` for local play, your LAN/WAN IP for remote. Leave blank in config to auto-detect |
 | `ClientMode` | Target client version (`ZZ`, `G10`, `Forward4`, etc.) |
-| `BinPath` | Path to quest/scenario files |
+| `BinPath` | Path to quest/scenario files. Usually left unset — auto-detects `game-data/` or an existing `bin/`, see [`docs/binsync-format.md`](docs/binsync-format.md#the-game-databin-directory-rename) |
 | `Language` | Default server language: `"en"`, `"jp"`, `"fr"`, or `"zh"`. Players can override per-session in-game via `!lang <code>` |
 
 ### Localization (i18n)
@@ -226,6 +241,37 @@ The token is consumed on success and cannot be reused. To cancel a pending grant
 UPDATE characters SET savedata_hash = NULL WHERE id = <char_id>;
 ```
 The correct hash will be recomputed on the next save.
+
+## Data Sync Tools
+
+See [Quest & Scenario Files](#quest--scenario-files) for the quick-start version. Full reference: [`docs/binsync-format.md`](docs/binsync-format.md).
+
+### Build binsync
+
+```bash
+go build -o binsync ./cmd/binsync/
+```
+
+```bash
+./binsync --config config.json                                            # reads BinSync.ManifestURL from config.json
+./binsync --manifest-url https://data.mogapedia.fr/erupe/manifest.json    # or pass it directly
+./binsync --manifest-url <url> --bin-path custom-dir                      # override the install directory
+```
+
+Downloads/skips/failures are printed as they happen, with a final `fetched=N skipped=N failed=N orphans=N` summary. Exits non-zero if any file failed. Safe to re-run any time — it only fetches what changed, and never overwrites an existing good file with a bad or invalid one.
+
+### questconv (data curators only)
+
+`questconv` is producer-side tooling for whoever curates the remote manifest — not something a typical server operator runs.
+
+```bash
+go build -o questconv ./cmd/questconv/
+
+./questconv export   --bin-path game-data --out export/ --verify   # .bin -> .json, with round-trip validation
+./questconv manifest --dir export/ --out export/manifest.json      # hash export/ into a binsync-compatible manifest
+```
+
+`--verify` recompiles each exported file and diffs it against the parsed original, flagging mismatches — see [`docs/binsync-format.md`](docs/binsync-format.md#what-this-does-not-solve) for what a large mismatch count means before trusting a data set enough to publish it.
 
 ## Features
 
@@ -308,7 +354,8 @@ go test -v -race ./...     # Check for race conditions (mandatory before merging
 
 ### Quest files not loading
 
-- Confirm `BinPath` in config.json points to extracted quest/scenario files
+- Run `./binsync` (see [Quest & Scenario Files](#quest--scenario-files)) or check the setup wizard's Quest Files step for the directory it's actually checking
+- If `BinPath` is set explicitly in config.json, confirm it points to extracted quest/scenario files
 - Verify binary files match your `ClientMode` setting
 - Check file permissions
 
@@ -327,7 +374,7 @@ Enable detailed logging in `config.json`:
 
 ## Resources
 
-- **Quest/Scenario Files**: [Download (catbox)](https://files.catbox.moe/xf0l7w.7z)
+- **Quest/Scenario Files**: sync with `./binsync` (see [Quest & Scenario Files](#quest--scenario-files)), or [download manually (catbox)](https://files.catbox.moe/xf0l7w.7z)
 - **Documentation**: [Erupe Wiki](https://github.com/Mezeporta/Erupe/wiki)
 - **Discord Communities**:
   - [Mezeporta Square](https://discord.gg/DnwcpXM488)
