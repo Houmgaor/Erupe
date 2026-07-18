@@ -10,10 +10,10 @@
 
    Edit `docker/config.json` — set `Database.Host` to `"db"` and `Database.Password` to match `docker-compose.yml` (default: `password`). The example config is minimal; see `config.reference.json` for all available options.
 
-2. Get quest/scenario files into `docker/game-data/` (or `docker/bin/` if you're upgrading an existing install — both are mounted, see [`docs/binsync-format.md`](../docs/binsync-format.md)). `binsync` is a plain host-side binary — build it per the main [README's Data Sync Tools](../README.md#data-sync-tools) section and point it at the host directory directly:
+2. Get quest/scenario files into `docker/game-data/` (or `docker/bin/` if you're upgrading an existing install — both are mounted, see [`docs/binsync-format.md`](../docs/binsync-format.md)). `binsync` is a plain host-side binary — build it per the main [README's Data Sync Tools](../README.md#data-sync-tools) section and point it at the host directory directly, using whichever manifest URL your community uses (Erupe doesn't default to one — the example below is Mogapedia's):
 
    ```bash
-   ./binsync --manifest-url https://data.mogapedia.fr/erupe/manifest.json --bin-path docker/game-data
+   ./binsync --manifest-url <manifest-url> --bin-path docker/game-data
    ```
 
    or place a [manual download](https://files.catbox.moe/xf0l7w.7z) directly into `docker/game-data/`.

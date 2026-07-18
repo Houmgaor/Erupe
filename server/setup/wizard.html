@@ -151,7 +151,8 @@ h1{font-size:1.75rem;margin-bottom:.5rem;color:#e94560;text-align:center}
   </div>
   <div style="margin-top:1rem">
     <label style="font-size:.85rem;color:#aaa;display:block;margin-bottom:.3rem">Manifest URL</label>
-    <input type="text" id="sync-manifest-url" placeholder="https://data.mogapedia.fr/erupe/manifest.json" style="width:100%;margin-bottom:.7rem">
+    <input type="text" id="sync-manifest-url" placeholder="https://your-data-host.example/erupe/manifest.json" style="width:100%;margin-bottom:.3rem">
+    <p style="font-size:.75rem;color:#666;margin-bottom:.7rem">Erupe doesn't bundle or default to any particular host — enter the manifest URL your community uses (e.g. Mogapedia's, another community's, or one you host yourself; see <code>docs/binsync-format.md</code>).</p>
     <button class="btn btn-secondary" id="btn-sync-quests" onclick="syncQuests()">Sync Now</button>
     <button class="btn btn-secondary" id="btn-recheck-quests" onclick="checkQuests()">Re-check</button>
   </div>

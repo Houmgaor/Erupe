@@ -98,10 +98,10 @@ These files contain quest definitions, scenario data, and Hunting Road (`rengoku
 
 ### Option A: Sync (recommended)
 
-Download `binsync` from [GitHub Releases](https://github.com/Mezeporta/Erupe/releases/latest) alongside the server binary, then:
+Download `binsync` from [GitHub Releases](https://github.com/Mezeporta/Erupe/releases/latest) alongside the server binary, then point it at a manifest URL from whichever community you're getting data from — Erupe doesn't bundle or default to one:
 
 ```bash
-./binsync --manifest-url https://data.mogapedia.fr/erupe/manifest.json
+./binsync --manifest-url <manifest-url>              # e.g. https://data.mogapedia.fr/erupe/manifest.json for Mogapedia's
 ```
 
 This downloads and installs quest/scenario/road data into `game-data/` (or `docker/game-data/` for Docker installs), verifying each file's hash and content before installing it — see [`docs/binsync-format.md`](docs/binsync-format.md) for how. The same action is available as a "Sync Now" button in the setup wizard's Quest Files step. Re-run it any time to pick up corrections — it only downloads what changed.
@@ -246,6 +246,8 @@ The correct hash will be recomputed on the next save.
 
 See [Quest & Scenario Files](#quest--scenario-files) for the quick-start version. Full reference: [`docs/binsync-format.md`](docs/binsync-format.md).
 
+There is no built-in or default manifest host. `BinSync.ManifestURL` is empty unless you set it — Mogapedia's is one example (used in the commands below), not a requirement; point it at any community's manifest, or host your own with `questconv` (see below).
+
 ### Build binsync
 
 ```bash
@@ -254,7 +256,7 @@ go build -o binsync ./cmd/binsync/
 
 ```bash
 ./binsync --config config.json                                            # reads BinSync.ManifestURL from config.json
-./binsync --manifest-url https://data.mogapedia.fr/erupe/manifest.json    # or pass it directly
+./binsync --manifest-url https://data.mogapedia.fr/erupe/manifest.json    # or any other manifest URL, passed directly
 ./binsync --manifest-url <url> --bin-path custom-dir                      # override the install directory
 ```
 

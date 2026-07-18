@@ -4,9 +4,11 @@
 
 ## Overview
 
-Quest, scenario, and Hunting Road (`rengoku`) data is derived from Capcom's original game. Erupe's own git repository never contains this data — the `game-data/` (formerly `bin/`) directory is git-ignored, and quest/scenario/road `.json`/`.bin` files are only ever distributed out-of-band, from infrastructure Mogapedia controls directly (not GitHub). `binsync` is the mechanism for getting that data from a self-hosted manifest onto a server operator's machine, safely and verifiably.
+Quest, scenario, and Hunting Road (`rengoku`) data is derived from Capcom's original game. Erupe's own git repository never contains this data — the `game-data/` (formerly `bin/`) directory is git-ignored, and quest/scenario/road `.json`/`.bin` files are only ever distributed out-of-band, from infrastructure someone else controls directly (not GitHub). `binsync` is the mechanism for getting that data from a self-hosted manifest onto a server operator's machine, safely and verifiably.
 
 This intentionally keeps Erupe's own git history and GitHub repository free of the data itself: a takedown or complaint about the data can only ever target the host actually serving it, never the codebase.
+
+**No manifest host is privileged or built in.** `BinSync.ManifestURL` (`config/config.go`) defaults to an empty string — the wizard, `cmd/binsync`, and `cmd/questconv` all require an operator to explicitly supply a URL, and none of them fall back to any particular server. Erupe is used by more than one community (see `README.md`'s Resources section); each is free to run its own manifest host, and a server operator picks whichever one they trust — or runs `cmd/questconv` themselves to host their own. Examples in this repo's docs that use `https://data.mogapedia.fr/...` are illustrating the mechanism, not designating a canonical source.
 
 ## Manifest format
 
