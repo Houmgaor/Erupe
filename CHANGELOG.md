@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Remote quest/scenario/road data sync (`server/binsync`, `cmd/binsync`, setup wizard "Sync Now"): downloads JSON data from a self-hosted HTTPS manifest, verifying each file's SHA-256 and its content via Erupe's own `CompileQuestJSON`/`CompileScenarioJSON`/`BuildRengokuBinary` before installing it, so a bad or corrupted fetch never overwrites known-good local data. Replaces the old single static catbox.moe archive link as the primary distribution path (kept as a manual fallback). See `docs/binsync-format.md`.
+- `cmd/questconv`: producer-side tooling for whoever curates the remote data set — bulk-converts retail `.bin` quest/scenario files to `.json` via the existing `ParseQuestBinary`/`ParseScenarioBinary`, with an optional `--verify` round-trip check, and generates the `manifest.json` `binsync` consumes.
+- `config.ResolveBinPath`/`Config.ResolvedBinPath()`: the quest/scenario/road data directory is now self-documenting (`game-data/` by default) instead of `bin/`, which predates JSON support and no longer describes what's stored there. An existing populated `bin/` directory is detected and kept automatically — no config.json changes needed on upgrade.
+
 ### Removed
 
 - `stable/v9.2.x` branch and its `SECURITY.md` supported-version entry — the branch had been untouched since 2026-02-08 and 9.2.x is well past the current 9.4.x release line.

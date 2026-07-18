@@ -125,6 +125,10 @@
       "RelayChannelID": ""
     }
   },
+  "BinSync": {
+    "Enabled": false,
+    "ManifestURL": ""
+  },
   "Commands": [
     {
       "Name": "Help",

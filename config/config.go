@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -93,6 +95,7 @@ type Config struct {
 	DebugOptions    DebugOptions
 	GameplayOptions GameplayOptions
 	Discord         Discord
+	BinSync         BinSync
 	Commands        []Command
 	Courses         []Course
 	Database        Database
@@ -100,6 +103,63 @@ type Config struct {
 	API             API
 	Channel         Channel
 	Entrance        Entrance
+}
+
+// DefaultBinPath is the directory new installs use for quest/scenario/road
+// data. It replaces the historic "bin" default, which predates JSON support
+// (see server/binsync) and no longer describes what's actually stored there
+// — this name is meant to read clearly to a non-technical server operator
+// dragging files into place.
+const DefaultBinPath = "game-data"
+
+// legacyBinPath is the old default. ResolveBinPath falls back to it
+// automatically whenever it's already populated, so upgrading past this
+// rename requires no config.json edits on existing installs.
+const legacyBinPath = "bin"
+
+// ResolvedBinPath returns the directory Erupe should actually read
+// quest/scenario/road data from. See ResolveBinPath for the resolution
+// rule; this is the same logic, applied to this Config's BinPath.
+func (c *Config) ResolvedBinPath() string {
+	return ResolveBinPath(c.BinPath)
+}
+
+// ResolveBinPath decides which directory to use given a configured BinPath
+// value (typically Config.BinPath, or "bin" as a sentinel when no config
+// exists yet, e.g. in the setup wizard or cmd/binsync before config.json is
+// read). An explicitly configured path other than the historic "bin"
+// default is always honored as-is — this only ever second-guesses "bin"
+// itself, since that's the one value that's ambiguous between "the operator
+// deliberately chose bin" and "this is just what Viper defaults to."
+//
+//   - If a legacy bin/ directory already has quest data in it, keep using
+//     it, so existing installs upgrade with zero config changes.
+//   - Otherwise, use DefaultBinPath — covering both fresh installs (nothing
+//     on disk yet) and installs that have already migrated to it.
+func ResolveBinPath(configured string) string {
+	if configured != legacyBinPath {
+		return configured
+	}
+	if hasQuestData(legacyBinPath) {
+		return legacyBinPath
+	}
+	return DefaultBinPath
+}
+
+// hasQuestData reports whether dir/quests/ contains at least one file,
+// mirroring the "found" definition the setup wizard already uses to check
+// for quest data (server/setup/wizard.go's checkQuestFiles).
+func hasQuestData(dir string) bool {
+	entries, err := os.ReadDir(filepath.Join(dir, "quests"))
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 type SaveDumpOptions struct {
@@ -218,6 +278,13 @@ type DiscordRelay struct {
 	Enabled          bool
 	MaxMessageLength int
 	RelayChannelID   string
+}
+
+// BinSync holds config for downloading quest/scenario/road JSON data from a
+// remote manifest into BinPath. See server/binsync for the implementation.
+type BinSync struct {
+	Enabled     bool   // Whether the sync tooling/wizard step is offered at all
+	ManifestURL string // HTTP(S) URL of the remote manifest.json
 }
 
 // Command is a channelserver chat command
@@ -432,6 +499,11 @@ func registerDefaults() {
 
 	// Discord
 	viper.SetDefault("Discord.RelayChannel.MaxMessageLength", 183)
+
+	// BinSync — dot-notation so a user setting only BinSync.Enabled doesn't
+	// zero out ManifestURL (same reasoning as DebugOptions/GameplayOptions).
+	viper.SetDefault("BinSync.Enabled", false)
+	viper.SetDefault("BinSync.ManifestURL", "")
 
 	// Commands (whole-struct default — replaced entirely if user provides any)
 	viper.SetDefault("Commands", []Command{
