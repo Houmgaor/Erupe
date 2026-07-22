@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cmd/questconv`: producer-side tooling for whoever curates the remote data set — bulk-converts retail `.bin` quest/scenario files to `.json` via the existing `ParseQuestBinary`/`ParseScenarioBinary`, with an optional `--verify` round-trip check, and generates the `manifest.json` `binsync` consumes.
 - `config.ResolveBinPath`/`Config.ResolvedBinPath()`: the quest/scenario/road data directory is now self-documenting (`game-data/` by default) instead of `bin/`, which predates JSON support and no longer describes what's stored there. An existing populated `bin/` directory is detected and kept automatically — no config.json changes needed on upgrade.
 
+### Fixed
+
+- Legacy API routes `/login`, `/register`, and `/character/{create,delete,export}` are now POST-only (matching their `/v2` equivalents), so bare `GET` probes from internet scanners get a 405 instead of reaching the handler and failing body decode. Those decode failures are also downgraded from `Error` (which attached a full stacktrace) to `Debug`, since a malformed request body is a client error, not a server fault — this was the sole source of the recurring `ERROR JSON decode error {"error": "EOF"}` log spam.
+- Channel-server recv-loop disconnects (`sys_session.go`) no longer log at `WARN` for routine cases: pre-auth probes (`charID == 0`, e.g. port scanners on the channel port) drop to `Debug` and authenticated-player network resets to `Info`, keeping genuine errors visible.
+
 ### Removed
 
 - `stable/v9.2.x` branch and its `SECURITY.md` supported-version entry — the branch had been untouched since 2026-02-08 and 9.2.x is well past the current 9.4.x release line.
