@@ -8,32 +8,32 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
-	_config "erupe-ce/config"
-	"erupe-ce/server/channelserver"
+	"erupe-ce/common/gametime"
+	cfg "erupe-ce/config"
 	"go.uber.org/zap"
 )
 
 // TestLauncherEndpoint tests the /launcher endpoint
 func TestLauncherEndpoint(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
-	cfg.API.Banners = []_config.APISignBanner{
+	c := NewTestConfig()
+	c.API.Banners = []cfg.APISignBanner{
 		{Src: "http://example.com/banner1.jpg", Link: "http://example.com"},
 	}
-	cfg.API.Messages = []_config.APISignMessage{
+	c.API.Messages = []cfg.APISignMessage{
 		{Message: "Welcome to Erupe", Date: 0, Kind: 0, Link: "http://example.com"},
 	}
-	cfg.API.Links = []_config.APISignLink{
+	c.API.Links = []cfg.APISignLink{
 		{Name: "Forum", Icon: "forum", Link: "http://forum.example.com"},
 	}
 
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
-		db:          nil,
+		erupeConfig: c,
 	}
 
 	// Create test request
@@ -81,16 +81,16 @@ func TestLauncherEndpoint(t *testing.T) {
 // TestLauncherEndpointEmptyConfig tests launcher with empty config
 func TestLauncherEndpointEmptyConfig(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
-	cfg.API.Banners = []_config.APISignBanner{}
-	cfg.API.Messages = []_config.APISignMessage{}
-	cfg.API.Links = []_config.APISignLink{}
+	c := NewTestConfig()
+	c.API.Banners = []cfg.APISignBanner{}
+	c.API.Messages = []cfg.APISignMessage{}
+	c.API.Links = []cfg.APISignLink{}
 
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
+		erupeConfig: c,
 	}
 
 	req := httptest.NewRequest("GET", "/launcher", nil)
@@ -99,7 +99,7 @@ func TestLauncherEndpointEmptyConfig(t *testing.T) {
 	server.Launcher(recorder, req)
 
 	var respData LauncherResponse
-	json.NewDecoder(recorder.Body).Decode(&respData)
+	_ = json.NewDecoder(recorder.Body).Decode(&respData)
 
 	if respData.Banners == nil {
 		t.Error("Banners should not be nil, should be empty slice")
@@ -117,13 +117,12 @@ func TestLauncherEndpointEmptyConfig(t *testing.T) {
 // TestLoginEndpointInvalidJSON tests login with invalid JSON
 func TestLoginEndpointInvalidJSON(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
+	c := NewTestConfig()
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
-		db:          nil,
+		erupeConfig: c,
 	}
 
 	// Invalid JSON
@@ -142,19 +141,18 @@ func TestLoginEndpointInvalidJSON(t *testing.T) {
 // TestLoginEndpointEmptyCredentials tests login with empty credentials
 func TestLoginEndpointEmptyCredentials(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
+	c := NewTestConfig()
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
-		db:          nil,
+		erupeConfig: c,
 	}
 
 	tests := []struct {
-		name     string
-		username string
-		password string
+		name      string
+		username  string
+		password  string
 		wantPanic bool // Note: will panic without real DB
 	}{
 		{"EmptyUsername", "", "password", true},
@@ -194,13 +192,12 @@ func TestLoginEndpointEmptyCredentials(t *testing.T) {
 // TestRegisterEndpointInvalidJSON tests register with invalid JSON
 func TestRegisterEndpointInvalidJSON(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
+	c := NewTestConfig()
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
-		db:          nil,
+		erupeConfig: c,
 	}
 
 	invalidJSON := `{"username": "test"`
@@ -217,13 +214,12 @@ func TestRegisterEndpointInvalidJSON(t *testing.T) {
 // TestRegisterEndpointEmptyCredentials tests register with empty fields
 func TestRegisterEndpointEmptyCredentials(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
+	c := NewTestConfig()
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
-		db:          nil,
+		erupeConfig: c,
 	}
 
 	tests := []struct {
@@ -265,13 +261,12 @@ func TestRegisterEndpointEmptyCredentials(t *testing.T) {
 // TestCreateCharacterEndpointInvalidJSON tests create character with invalid JSON
 func TestCreateCharacterEndpointInvalidJSON(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
+	c := NewTestConfig()
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
-		db:          nil,
+		erupeConfig: c,
 	}
 
 	invalidJSON := `{"token": `
@@ -288,13 +283,12 @@ func TestCreateCharacterEndpointInvalidJSON(t *testing.T) {
 // TestDeleteCharacterEndpointInvalidJSON tests delete character with invalid JSON
 func TestDeleteCharacterEndpointInvalidJSON(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
+	c := NewTestConfig()
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
-		db:          nil,
+		erupeConfig: c,
 	}
 
 	invalidJSON := `{"token": "test"`
@@ -311,13 +305,12 @@ func TestDeleteCharacterEndpointInvalidJSON(t *testing.T) {
 // TestExportSaveEndpointInvalidJSON tests export save with invalid JSON
 func TestExportSaveEndpointInvalidJSON(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
+	c := NewTestConfig()
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
-		db:          nil,
+		erupeConfig: c,
 	}
 
 	invalidJSON := `{"token": `
@@ -334,15 +327,14 @@ func TestExportSaveEndpointInvalidJSON(t *testing.T) {
 // TestScreenShotEndpointDisabled tests screenshot endpoint when disabled
 func TestScreenShotEndpointDisabled(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
-	cfg.Screenshots.Enabled = false
+	c := NewTestConfig()
+	c.Screenshots.Enabled = false
 
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
-		db:          nil,
+		erupeConfig: c,
 	}
 
 	req := httptest.NewRequest("POST", "/api/ss/bbs/upload.php", nil)
@@ -355,7 +347,7 @@ func TestScreenShotEndpointDisabled(t *testing.T) {
 		XMLName xml.Name `xml:"result"`
 		Code    string   `xml:"code"`
 	}
-	xml.NewDecoder(recorder.Body).Decode(&result)
+	_ = xml.NewDecoder(recorder.Body).Decode(&result)
 
 	if result.Code != "400" {
 		t.Errorf("Expected code 400, got %s", result.Code)
@@ -373,13 +365,12 @@ func TestScreenShotEndpointInvalidMethod(t *testing.T) {
 // TestScreenShotGetInvalidToken tests screenshot get with invalid token
 func TestScreenShotGetInvalidToken(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
+	c := NewTestConfig()
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
-		db:          nil,
+		erupeConfig: c,
 	}
 
 	tests := []struct {
@@ -408,22 +399,28 @@ func TestScreenShotGetInvalidToken(t *testing.T) {
 	}
 }
 
+// newTestUserRepo returns a mock user repo suitable for newAuthData tests.
+func newTestUserRepo() *mockAPIUserRepo {
+	return &mockAPIUserRepo{
+		lastLogin:    time.Now(),
+		returnExpiry: time.Now().Add(time.Hour * 24 * 30),
+	}
+}
+
 // TestNewAuthDataStructure tests the newAuthData helper function
 func TestNewAuthDataStructure(t *testing.T) {
-	t.Skip("newAuthData requires database for getReturnExpiry - needs integration test")
-
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
-	cfg.DebugOptions.MaxLauncherHR = false
-	cfg.HideLoginNotice = false
-	cfg.LoginNotices = []string{"Notice 1", "Notice 2"}
+	c := NewTestConfig()
+	c.DebugOptions.MaxLauncherHR = false
+	c.HideLoginNotice = false
+	c.LoginNotices = []string{"Notice 1", "Notice 2"}
 
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
-		db:          nil,
+		erupeConfig: c,
+		userRepo:    newTestUserRepo(),
 	}
 
 	characters := []Character{
@@ -455,8 +452,8 @@ func TestNewAuthDataStructure(t *testing.T) {
 		t.Error("MezFes should not be nil")
 	}
 
-	if authData.PatchServer != cfg.API.PatchServer {
-		t.Errorf("PatchServer = %s, want %s", authData.PatchServer, cfg.API.PatchServer)
+	if authData.PatchServer != c.API.PatchServer {
+		t.Errorf("PatchServer = %s, want %s", authData.PatchServer, c.API.PatchServer)
 	}
 
 	if len(authData.Notices) == 0 {
@@ -466,18 +463,16 @@ func TestNewAuthDataStructure(t *testing.T) {
 
 // TestNewAuthDataDebugMode tests newAuthData with debug mode enabled
 func TestNewAuthDataDebugMode(t *testing.T) {
-	t.Skip("newAuthData requires database for getReturnExpiry - needs integration test")
-
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
-	cfg.DebugOptions.MaxLauncherHR = true
+	c := NewTestConfig()
+	c.DebugOptions.MaxLauncherHR = true
 
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
-		db:          nil,
+		erupeConfig: c,
+		userRepo:    newTestUserRepo(),
 	}
 
 	characters := []Character{
@@ -500,20 +495,18 @@ func TestNewAuthDataDebugMode(t *testing.T) {
 
 // TestNewAuthDataMezFesConfiguration tests MezFes configuration in newAuthData
 func TestNewAuthDataMezFesConfiguration(t *testing.T) {
-	t.Skip("newAuthData requires database for getReturnExpiry - needs integration test")
-
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
-	cfg.GameplayOptions.MezFesSoloTickets = 150
-	cfg.GameplayOptions.MezFesGroupTickets = 75
-	cfg.GameplayOptions.MezFesSwitchMinigame = true
+	c := NewTestConfig()
+	c.GameplayOptions.MezFesSoloTickets = 150
+	c.GameplayOptions.MezFesGroupTickets = 75
+	c.GameplayOptions.MezFesSwitchMinigame = true
 
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
-		db:          nil,
+		erupeConfig: c,
+		userRepo:    newTestUserRepo(),
 	}
 
 	authData := server.newAuthData(1, 0, 1, "token", []Character{})
@@ -534,19 +527,17 @@ func TestNewAuthDataMezFesConfiguration(t *testing.T) {
 
 // TestNewAuthDataHideNotices tests notice hiding in newAuthData
 func TestNewAuthDataHideNotices(t *testing.T) {
-	t.Skip("newAuthData requires database for getReturnExpiry - needs integration test")
-
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
-	cfg.HideLoginNotice = true
-	cfg.LoginNotices = []string{"Notice 1", "Notice 2"}
+	c := NewTestConfig()
+	c.HideLoginNotice = true
+	c.LoginNotices = []string{"Notice 1", "Notice 2"}
 
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
-		db:          nil,
+		erupeConfig: c,
+		userRepo:    newTestUserRepo(),
 	}
 
 	authData := server.newAuthData(1, 0, 1, "token", []Character{})
@@ -558,22 +549,20 @@ func TestNewAuthDataHideNotices(t *testing.T) {
 
 // TestNewAuthDataTimestamps tests timestamp generation in newAuthData
 func TestNewAuthDataTimestamps(t *testing.T) {
-	t.Skip("newAuthData requires database for getReturnExpiry - needs integration test")
-
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
+	c := NewTestConfig()
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
-		db:          nil,
+		erupeConfig: c,
+		userRepo:    newTestUserRepo(),
 	}
 
 	authData := server.newAuthData(1, 0, 1, "token", []Character{})
 
 	// Timestamps should be reasonable (within last minute and next 30 days)
-	now := uint32(channelserver.TimeAdjusted().Unix())
+	now := uint32(gametime.Adjusted().Unix())
 	if authData.CurrentTS < now-60 || authData.CurrentTS > now+60 {
 		t.Errorf("CurrentTS not within reasonable range: %d vs %d", authData.CurrentTS, now)
 	}
@@ -583,15 +572,53 @@ func TestNewAuthDataTimestamps(t *testing.T) {
 	}
 }
 
+// TestHealthEndpointNoDB tests the /health endpoint when no database is configured.
+func TestHealthEndpointNoDB(t *testing.T) {
+	logger := NewTestLogger(t)
+	defer func() { _ = logger.Sync() }()
+
+	server := &APIServer{
+		logger:      logger,
+		erupeConfig: NewTestConfig(),
+		db:          nil,
+	}
+
+	req := httptest.NewRequest("GET", "/health", nil)
+	recorder := httptest.NewRecorder()
+
+	server.Health(recorder, req)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Errorf("Expected status %d, got %d", http.StatusServiceUnavailable, recorder.Code)
+	}
+
+	if contentType := recorder.Header().Get("Content-Type"); contentType != "application/json" {
+		t.Errorf("Content-Type = %v, want application/json", contentType)
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(recorder.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if resp["status"] != "unhealthy" {
+		t.Errorf("status = %q, want %q", resp["status"], "unhealthy")
+	}
+
+	if resp["error"] != "database not configured" {
+		t.Errorf("error = %q, want %q", resp["error"], "database not configured")
+	}
+}
+
 // BenchmarkLauncherEndpoint benchmarks the launcher endpoint
 func BenchmarkLauncherEndpoint(b *testing.B) {
 	logger, _ := zap.NewDevelopment()
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
+	c := NewTestConfig()
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
+		erupeConfig: c,
 	}
 
 	b.ResetTimer()
@@ -605,12 +632,16 @@ func BenchmarkLauncherEndpoint(b *testing.B) {
 // BenchmarkNewAuthData benchmarks the newAuthData function
 func BenchmarkNewAuthData(b *testing.B) {
 	logger, _ := zap.NewDevelopment()
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := NewTestConfig()
+	c := NewTestConfig()
 	server := &APIServer{
 		logger:      logger,
-		erupeConfig: cfg,
+		erupeConfig: c,
+		userRepo: &mockAPIUserRepo{
+			lastLogin:    time.Now(),
+			returnExpiry: time.Now().Add(time.Hour * 24 * 30),
+		},
 	}
 
 	characters := make([]Character, 16)

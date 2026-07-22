@@ -10,12 +10,12 @@ import (
 // TestCharacterSaveDataPersistenceEdgeCases tests edge cases in character savedata persistence
 func TestCharacterSaveDataPersistenceEdgeCases(t *testing.T) {
 	tests := []struct {
-		name       string
-		charID     uint32
-		charName   string
-		isNew      bool
-		playtime   uint32
-		wantValid  bool
+		name      string
+		charID    uint32
+		charName  string
+		isNew     bool
+		playtime  uint32
+		wantValid bool
 	}{
 		{
 			name:      "valid_new_character",
@@ -85,34 +85,34 @@ func TestCharacterSaveDataPersistenceEdgeCases(t *testing.T) {
 // TestSaveDataCompressionRoundTrip tests compression/decompression edge cases
 func TestSaveDataCompressionRoundTrip(t *testing.T) {
 	tests := []struct {
-		name       string
-		dataSize   int
+		name        string
+		dataSize    int
 		dataPattern byte
-		compresses bool
+		compresses  bool
 	}{
 		{
-			name:       "empty_data",
-			dataSize:   0,
+			name:        "empty_data",
+			dataSize:    0,
 			dataPattern: 0x00,
-			compresses: true,
+			compresses:  true,
 		},
 		{
-			name:       "small_data",
-			dataSize:   10,
+			name:        "small_data",
+			dataSize:    10,
 			dataPattern: 0xFF,
-			compresses: false, // Small data may not compress well
+			compresses:  false, // Small data may not compress well
 		},
 		{
-			name:       "highly_repetitive_data",
-			dataSize:   1000,
+			name:        "highly_repetitive_data",
+			dataSize:    1000,
 			dataPattern: 0xAA,
-			compresses: true, // Highly repetitive should compress
+			compresses:  true, // Highly repetitive should compress
 		},
 		{
-			name:       "random_data",
-			dataSize:   500,
+			name:        "random_data",
+			dataSize:    500,
 			dataPattern: 0x00, // Will be varied by position
-			compresses: false,
+			compresses:  false,
 		},
 	}
 
@@ -149,34 +149,34 @@ func TestSaveDataCompressionRoundTrip(t *testing.T) {
 // TestSaveDataPointerHandling tests edge cases in save data pointer management
 func TestSaveDataPointerHandling(t *testing.T) {
 	tests := []struct {
-		name           string
-		pointerCount   int
+		name            string
+		pointerCount    int
 		maxPointerValue int
-		valid          bool
+		valid           bool
 	}{
 		{
-			name:           "no_pointers",
-			pointerCount:   0,
+			name:            "no_pointers",
+			pointerCount:    0,
 			maxPointerValue: 0,
-			valid:          true,
+			valid:           true,
 		},
 		{
-			name:           "single_pointer",
-			pointerCount:   1,
+			name:            "single_pointer",
+			pointerCount:    1,
 			maxPointerValue: 100,
-			valid:          true,
+			valid:           true,
 		},
 		{
-			name:           "multiple_pointers",
-			pointerCount:   10,
+			name:            "multiple_pointers",
+			pointerCount:    10,
 			maxPointerValue: 5000,
-			valid:          true,
+			valid:           true,
 		},
 		{
-			name:           "max_pointers",
-			pointerCount:   100,
+			name:            "max_pointers",
+			pointerCount:    100,
 			maxPointerValue: 1000000,
-			valid:          true,
+			valid:           true,
 		},
 	}
 
@@ -321,12 +321,12 @@ func TestSaveDataRPHandling(t *testing.T) {
 // TestSaveDataHousingDataHandling tests various housing/decorative data fields
 func TestSaveDataHousingDataHandling(t *testing.T) {
 	tests := []struct {
-		name         string
-		houseTier    []byte
-		houseData    []byte
+		name          string
+		houseTier     []byte
+		houseData     []byte
 		bookshelfData []byte
-		galleryData  []byte
-		validEmpty   bool
+		galleryData   []byte
+		validEmpty    bool
 	}{
 		{
 			name:          "all_empty_housing",
@@ -588,8 +588,8 @@ func TestSaveDataBoundaryValues(t *testing.T) {
 // TestSaveDataSerialization tests savedata can be serialized to binary format
 func TestSaveDataSerialization(t *testing.T) {
 	tests := []struct {
-		name    string
-		charID  uint32
+		name     string
+		charID   uint32
 		playtime uint32
 	}{
 		{
@@ -613,8 +613,8 @@ func TestSaveDataSerialization(t *testing.T) {
 
 			// Simulate binary serialization
 			buf := new(bytes.Buffer)
-			binary.Write(buf, binary.LittleEndian, savedata.CharID)
-			binary.Write(buf, binary.LittleEndian, savedata.Playtime)
+			_ = binary.Write(buf, binary.LittleEndian, savedata.CharID)
+			_ = binary.Write(buf, binary.LittleEndian, savedata.Playtime)
 
 			// Should have 8 bytes (4 + 4)
 			if buf.Len() != 8 {
@@ -625,8 +625,8 @@ func TestSaveDataSerialization(t *testing.T) {
 			data := buf.Bytes()
 			var charID uint32
 			var playtime uint32
-			binary.Read(bytes.NewReader(data), binary.LittleEndian, &charID)
-			binary.Read(bytes.NewReader(data[4:]), binary.LittleEndian, &playtime)
+			_ = binary.Read(bytes.NewReader(data), binary.LittleEndian, &charID)
+			_ = binary.Read(bytes.NewReader(data[4:]), binary.LittleEndian, &playtime)
 
 			if charID != tt.charID || playtime != tt.playtime {
 				t.Error("serialization round-trip failed")
@@ -643,18 +643,18 @@ func TestSaveDataTimestampHandling(t *testing.T) {
 		expectFresh bool
 	}{
 		{
-			name:       "just_saved",
-			ageSeconds: 0,
+			name:        "just_saved",
+			ageSeconds:  0,
 			expectFresh: true,
 		},
 		{
-			name:       "recent_save",
-			ageSeconds: 60,
+			name:        "recent_save",
+			ageSeconds:  60,
 			expectFresh: true,
 		},
 		{
-			name:       "old_save",
-			ageSeconds: 86400, // 1 day old
+			name:        "old_save",
+			ageSeconds:  86400, // 1 day old
 			expectFresh: false,
 		},
 	}
@@ -745,9 +745,9 @@ func TestDataCorruptionRecovery(t *testing.T) {
 // TestChecksumValidation tests savedata checksum validation
 func TestChecksumValidation(t *testing.T) {
 	tests := []struct {
-		name           string
-		data           []byte
-		checksumValid  bool
+		name          string
+		data          []byte
+		checksumValid bool
 	}{
 		{
 			name:          "valid_checksum",
@@ -794,11 +794,11 @@ func TestChecksumValidation(t *testing.T) {
 // TestSaveDataBackupRestoration tests backup and restoration functionality
 func TestSaveDataBackupRestoration(t *testing.T) {
 	tests := []struct {
-		name              string
-		originalCharID    uint32
-		originalPlaytime  uint32
-		hasBackup         bool
-		canRestore        bool
+		name             string
+		originalCharID   uint32
+		originalPlaytime uint32
+		hasBackup        bool
+		canRestore       bool
 	}{
 		{
 			name:             "backup_with_restore",
@@ -862,11 +862,11 @@ func TestSaveDataBackupRestoration(t *testing.T) {
 // TestSaveDataVersionMigration tests savedata version migration and compatibility
 func TestSaveDataVersionMigration(t *testing.T) {
 	tests := []struct {
-		name           string
-		sourceVersion  int
-		targetVersion  int
-		canMigrate     bool
-		dataLoss       bool
+		name          string
+		sourceVersion int
+		targetVersion int
+		canMigrate    bool
+		dataLoss      bool
 	}{
 		{
 			name:          "same_version",
@@ -932,10 +932,10 @@ func TestSaveDataVersionMigration(t *testing.T) {
 // TestSaveDataRollback tests rollback to previous savedata state
 func TestSaveDataRollback(t *testing.T) {
 	tests := []struct {
-		name              string
-		snapshots         int
-		canRollback       bool
-		rollbackSteps     int
+		name          string
+		snapshots     int
+		canRollback   bool
+		rollbackSteps int
 	}{
 		{
 			name:          "single_snapshot",
@@ -1048,18 +1048,18 @@ func TestSaveDataConcurrentAccess(t *testing.T) {
 		concurrentWrites int
 	}{
 		{
-			name:            "multiple_readers",
-			concurrentReads: 5,
+			name:             "multiple_readers",
+			concurrentReads:  5,
 			concurrentWrites: 0,
 		},
 		{
-			name:            "multiple_writers",
-			concurrentReads: 0,
+			name:             "multiple_writers",
+			concurrentReads:  0,
 			concurrentWrites: 3,
 		},
 		{
-			name:            "mixed_access",
-			concurrentReads: 3,
+			name:             "mixed_access",
+			concurrentReads:  3,
 			concurrentWrites: 2,
 		},
 	}

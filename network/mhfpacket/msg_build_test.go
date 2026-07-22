@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"erupe-ce/common/byteframe"
+	cfg "erupe-ce/config"
 	"erupe-ce/network/clientctx"
 )
 
@@ -25,7 +26,7 @@ func TestBuildParseDuplicateObject(t *testing.T) {
 		{"negative coords", 1, -1.0, -2.0, -3.0, 100, 200},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := &MsgSysDuplicateObject{
@@ -42,7 +43,7 @@ func TestBuildParseDuplicateObject(t *testing.T) {
 				t.Fatalf("Build() error = %v", err)
 			}
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgSysDuplicateObject{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -83,7 +84,7 @@ func TestBuildParsePositionObject(t *testing.T) {
 		{"max object id", 0xFFFFFFFF, 999.999, -999.999, 0.001},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := &MsgSysPositionObject{
@@ -98,7 +99,7 @@ func TestBuildParsePositionObject(t *testing.T) {
 				t.Fatalf("Build() error = %v", err)
 			}
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgSysPositionObject{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -136,7 +137,7 @@ func TestBuildParseCastedBinary(t *testing.T) {
 		{"larger payload", 42, 3, 4, []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A}},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := &MsgSysCastedBinary{
@@ -151,7 +152,7 @@ func TestBuildParseCastedBinary(t *testing.T) {
 				t.Fatalf("Build() error = %v", err)
 			}
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgSysCastedBinary{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -187,7 +188,7 @@ func TestBuildParseLoadRegister(t *testing.T) {
 		{"max values", 0xFFFFFFFF, 0xFFFFFFFF, 255},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
@@ -197,7 +198,7 @@ func TestBuildParseLoadRegister(t *testing.T) {
 			bf.WriteUint8(0)  // Zeroed
 			bf.WriteUint16(0) // Zeroed
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgSysLoadRegister{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -230,7 +231,7 @@ func TestBuildParseOperateRegister(t *testing.T) {
 		{"large payload", 0xFFFFFFFF, 0xDEADBEEF, make([]byte, 256)},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
@@ -240,7 +241,7 @@ func TestBuildParseOperateRegister(t *testing.T) {
 			bf.WriteUint16(uint16(len(tt.payload)))
 			bf.WriteBytes(tt.payload)
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgSysOperateRegister{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -271,7 +272,7 @@ func TestBuildParseNotifyUserBinary(t *testing.T) {
 		{"max", 0xFFFFFFFF, 255},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := &MsgSysNotifyUserBinary{
@@ -284,7 +285,7 @@ func TestBuildParseNotifyUserBinary(t *testing.T) {
 				t.Fatalf("Build() error = %v", err)
 			}
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgSysNotifyUserBinary{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -314,7 +315,7 @@ func TestBuildParseTime(t *testing.T) {
 		{"typical timestamp", false, 1700000000},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := &MsgSysTime{
@@ -327,7 +328,7 @@ func TestBuildParseTime(t *testing.T) {
 				t.Fatalf("Build() error = %v", err)
 			}
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgSysTime{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -355,12 +356,12 @@ func TestBuildParseUpdateObjectBinary(t *testing.T) {
 		{"max", 0xFFFFFFFF, 0xFFFFFFFF},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := &MsgSysUpdateObjectBinary{
-				Unk0: tt.unk0,
-				Unk1: tt.unk1,
+				ObjectHandleID: tt.unk0,
+				Unk1:           tt.unk1,
 			}
 
 			bf := byteframe.NewByteFrame()
@@ -368,14 +369,14 @@ func TestBuildParseUpdateObjectBinary(t *testing.T) {
 				t.Fatalf("Build() error = %v", err)
 			}
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgSysUpdateObjectBinary{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
 
-			if parsed.Unk0 != original.Unk0 {
-				t.Errorf("Unk0 = %d, want %d", parsed.Unk0, original.Unk0)
+			if parsed.ObjectHandleID != original.ObjectHandleID {
+				t.Errorf("Unk0 = %d, want %d", parsed.ObjectHandleID, original.ObjectHandleID)
 			}
 			if parsed.Unk1 != original.Unk1 {
 				t.Errorf("Unk1 = %d, want %d", parsed.Unk1, original.Unk1)
@@ -400,7 +401,7 @@ func TestBuildParseArrangeGuildMember(t *testing.T) {
 		{"many members", 999, 400, []uint32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
@@ -412,7 +413,7 @@ func TestBuildParseArrangeGuildMember(t *testing.T) {
 				bf.WriteUint32(id)
 			}
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgMhfArrangeGuildMember{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -451,7 +452,7 @@ func TestBuildParseEnumerateGuildMember(t *testing.T) {
 		{"large values", 0xFFFFFFFF, 0xDEADBEEF, 0xCAFEBABE},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
@@ -461,7 +462,7 @@ func TestBuildParseEnumerateGuildMember(t *testing.T) {
 			bf.WriteUint32(tt.allianceID)
 			bf.WriteUint32(tt.guildID)
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgMhfEnumerateGuildMember{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -494,7 +495,7 @@ func TestBuildParseStateCampaign(t *testing.T) {
 		{"max", 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFF},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
@@ -502,7 +503,7 @@ func TestBuildParseStateCampaign(t *testing.T) {
 			bf.WriteUint32(tt.campaignID)
 			bf.WriteUint16(tt.unk1)
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgMhfStateCampaign{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -514,8 +515,8 @@ func TestBuildParseStateCampaign(t *testing.T) {
 			if parsed.CampaignID != tt.campaignID {
 				t.Errorf("CampaignID = %d, want %d", parsed.CampaignID, tt.campaignID)
 			}
-			if parsed.Unk1 != tt.unk1 {
-				t.Errorf("Unk1 = %d, want %d", parsed.Unk1, tt.unk1)
+			if parsed.NullPadding != tt.unk1 {
+				t.Errorf("NullPadding = %d, want %d", parsed.NullPadding, tt.unk1)
 			}
 		})
 	}
@@ -525,27 +526,28 @@ func TestBuildParseStateCampaign(t *testing.T) {
 // Build is NOT IMPLEMENTED, so we manually write the binary representation.
 func TestBuildParseApplyCampaign(t *testing.T) {
 	tests := []struct {
-		name      string
-		ackHandle uint32
-		unk0      uint32
-		unk1      uint16
-		unk2      []byte
+		name       string
+		ackHandle  uint32
+		campaignID uint32
+		code       string
 	}{
-		{"typical", 0x55667788, 5, 10, make([]byte, 16)},
-		{"zero", 0, 0, 0, make([]byte, 16)},
-		{"max", 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFF, make([]byte, 16)},
+		{"typical", 0x55667788, 5, "TESTCODE"},
+		{"zero", 0, 0, ""},
+		{"max", 0xFFFFFFFF, 0xFFFFFFFF, "MAXCODE"},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
 			bf.WriteUint32(tt.ackHandle)
-			bf.WriteUint32(tt.unk0)
-			bf.WriteUint16(tt.unk1)
-			bf.WriteBytes(tt.unk2)
+			bf.WriteUint32(tt.campaignID)
+			bf.WriteUint16(0) // zeroed
+			codeBytes := make([]byte, 16)
+			copy(codeBytes, []byte(tt.code))
+			bf.WriteBytes(codeBytes)
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgMhfApplyCampaign{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -554,14 +556,11 @@ func TestBuildParseApplyCampaign(t *testing.T) {
 			if parsed.AckHandle != tt.ackHandle {
 				t.Errorf("AckHandle = 0x%X, want 0x%X", parsed.AckHandle, tt.ackHandle)
 			}
-			if parsed.Unk0 != tt.unk0 {
-				t.Errorf("Unk0 = %d, want %d", parsed.Unk0, tt.unk0)
+			if parsed.CampaignID != tt.campaignID {
+				t.Errorf("CampaignID = %d, want %d", parsed.CampaignID, tt.campaignID)
 			}
-			if parsed.Unk1 != tt.unk1 {
-				t.Errorf("Unk1 = %d, want %d", parsed.Unk1, tt.unk1)
-			}
-			if len(parsed.Unk2) != len(tt.unk2) {
-				t.Errorf("Unk2 len = %d, want %d", len(parsed.Unk2), len(tt.unk2))
+			if parsed.Code != tt.code {
+				t.Errorf("Code = %q, want %q", parsed.Code, tt.code)
 			}
 		})
 	}
@@ -579,7 +578,7 @@ func TestBuildParseEnumerateCampaign(t *testing.T) {
 		{"zero", 0, 0, 0},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := &MsgMhfEnumerateCampaign{
@@ -593,7 +592,7 @@ func TestBuildParseEnumerateCampaign(t *testing.T) {
 				t.Fatalf("Build() error = %v", err)
 			}
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgMhfEnumerateCampaign{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -622,7 +621,7 @@ func TestBuildParseEnumerateEvent(t *testing.T) {
 		{"nonzero", 42},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := &MsgMhfEnumerateEvent{
@@ -635,7 +634,7 @@ func TestBuildParseEnumerateEvent(t *testing.T) {
 			bf.WriteUint16(0) // Zeroed (discarded by Parse)
 			bf.WriteUint16(0) // Zeroed (discarded by Parse)
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgMhfEnumerateEvent{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -651,23 +650,23 @@ func TestBuildParseEnumerateEvent(t *testing.T) {
 // TestBuildParseAddUdTacticsPoint verifies Build/Parse round-trip for MsgMhfAddUdTacticsPoint.
 func TestBuildParseAddUdTacticsPoint(t *testing.T) {
 	tests := []struct {
-		name      string
-		ackHandle uint32
-		unk0      uint16
-		unk1      uint32
+		name          string
+		ackHandle     uint32
+		questID       uint16
+		tacticsPoints uint32
 	}{
 		{"typical", 1, 100, 50000},
 		{"zero", 0, 0, 0},
 		{"max", 0xFFFFFFFF, 0xFFFF, 0xFFFFFFFF},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := &MsgMhfAddUdTacticsPoint{
-				AckHandle: tt.ackHandle,
-				Unk0:      tt.unk0,
-				Unk1:      tt.unk1,
+				AckHandle:     tt.ackHandle,
+				QuestID:       tt.questID,
+				TacticsPoints: tt.tacticsPoints,
 			}
 
 			bf := byteframe.NewByteFrame()
@@ -675,7 +674,7 @@ func TestBuildParseAddUdTacticsPoint(t *testing.T) {
 				t.Fatalf("Build() error = %v", err)
 			}
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgMhfAddUdTacticsPoint{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -684,11 +683,11 @@ func TestBuildParseAddUdTacticsPoint(t *testing.T) {
 			if parsed.AckHandle != original.AckHandle {
 				t.Errorf("AckHandle = 0x%X, want 0x%X", parsed.AckHandle, original.AckHandle)
 			}
-			if parsed.Unk0 != original.Unk0 {
-				t.Errorf("Unk0 = %d, want %d", parsed.Unk0, original.Unk0)
+			if parsed.QuestID != original.QuestID {
+				t.Errorf("QuestID = %d, want %d", parsed.QuestID, original.QuestID)
 			}
-			if parsed.Unk1 != original.Unk1 {
-				t.Errorf("Unk1 = %d, want %d", parsed.Unk1, original.Unk1)
+			if parsed.TacticsPoints != original.TacticsPoints {
+				t.Errorf("TacticsPoints = %d, want %d", parsed.TacticsPoints, original.TacticsPoints)
 			}
 		})
 	}
@@ -712,7 +711,7 @@ func TestBuildParseApplyDistItem(t *testing.T) {
 		{"max", 0xFFFFFFFF, 255, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
@@ -722,7 +721,7 @@ func TestBuildParseApplyDistItem(t *testing.T) {
 			bf.WriteUint32(tt.unk2) // Read when RealClientMode >= G8
 			bf.WriteUint32(tt.unk3) // Read when RealClientMode >= G10
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgMhfApplyDistItem{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -760,14 +759,14 @@ func TestBuildParseEnumerateDistItem(t *testing.T) {
 		{"zero", 0, 0, 0, 0},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := &MsgMhfEnumerateDistItem{
 				AckHandle: tt.ackHandle,
 				DistType:  tt.distType,
 				Unk1:      tt.unk1,
-				Unk2:      tt.unk2,
+				MaxCount:  tt.unk2,
 			}
 
 			bf := byteframe.NewByteFrame()
@@ -775,10 +774,10 @@ func TestBuildParseEnumerateDistItem(t *testing.T) {
 			bf.WriteUint32(original.AckHandle)
 			bf.WriteUint8(original.DistType)
 			bf.WriteUint8(original.Unk1)
-			bf.WriteUint16(original.Unk2)
+			bf.WriteUint16(original.MaxCount)
 			bf.WriteUint8(0) // Unk3 length (for Z1+ client mode)
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgMhfEnumerateDistItem{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -793,8 +792,8 @@ func TestBuildParseEnumerateDistItem(t *testing.T) {
 			if parsed.Unk1 != original.Unk1 {
 				t.Errorf("Unk1 = %d, want %d", parsed.Unk1, original.Unk1)
 			}
-			if parsed.Unk2 != original.Unk2 {
-				t.Errorf("Unk2 = %d, want %d", parsed.Unk2, original.Unk2)
+			if parsed.MaxCount != original.MaxCount {
+				t.Errorf("Unk2 = %d, want %d", parsed.MaxCount, original.MaxCount)
 			}
 		})
 	}
@@ -813,7 +812,7 @@ func TestBuildParseAcquireExchangeShop(t *testing.T) {
 		{"larger payload", 0xDEADBEEF, []byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11, 0x22}},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := &MsgMhfAcquireExchangeShop{
@@ -827,7 +826,7 @@ func TestBuildParseAcquireExchangeShop(t *testing.T) {
 				t.Fatalf("Build() error = %v", err)
 			}
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgMhfAcquireExchangeShop{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -849,10 +848,10 @@ func TestBuildParseAcquireExchangeShop(t *testing.T) {
 // TestBuildParseDisplayedAchievement verifies Parse for MsgMhfDisplayedAchievement.
 // This struct has no exported fields; Parse only discards a single zeroed byte.
 func TestBuildParseDisplayedAchievement(t *testing.T) {
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	bf := byteframe.NewByteFrame()
 	bf.WriteUint8(0) // Zeroed (discarded by Parse)
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	parsed := &MsgMhfDisplayedAchievement{}
 	if err := parsed.Parse(bf, ctx); err != nil {
@@ -872,7 +871,7 @@ func TestBuildParseAddKouryouPoint(t *testing.T) {
 		{"max", 0xFFFFFFFF, 0xFFFFFFFF},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := &MsgMhfAddKouryouPoint{
@@ -885,7 +884,7 @@ func TestBuildParseAddKouryouPoint(t *testing.T) {
 				t.Fatalf("Build() error = %v", err)
 			}
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgMhfAddKouryouPoint{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -913,14 +912,14 @@ func TestBuildParseCheckDailyCafepoint(t *testing.T) {
 		{"zero", 0, 0},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
 			bf.WriteUint32(tt.ackHandle)
 			bf.WriteUint32(tt.unk)
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgMhfCheckDailyCafepoint{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -947,7 +946,7 @@ func TestBuildParsePing(t *testing.T) {
 		{"max", 0xFFFFFFFF},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := &MsgSysPing{
@@ -959,7 +958,7 @@ func TestBuildParsePing(t *testing.T) {
 				t.Fatalf("Build() error = %v", err)
 			}
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgSysPing{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -983,7 +982,7 @@ func TestBuildParseDeleteObject(t *testing.T) {
 		{"max", 0xFFFFFFFF},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := &MsgSysDeleteObject{
@@ -995,7 +994,7 @@ func TestBuildParseDeleteObject(t *testing.T) {
 				t.Fatalf("Build() error = %v", err)
 			}
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgSysDeleteObject{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -1019,7 +1018,7 @@ func TestBuildParseNotifyRegister(t *testing.T) {
 		{"max", 0xFFFFFFFF},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := &MsgSysNotifyRegister{
@@ -1031,7 +1030,7 @@ func TestBuildParseNotifyRegister(t *testing.T) {
 				t.Fatalf("Build() error = %v", err)
 			}
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgSysNotifyRegister{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -1047,10 +1046,10 @@ func TestBuildParseNotifyRegister(t *testing.T) {
 // TestBuildParseUnlockStage verifies Parse for MsgSysUnlockStage.
 // This struct has no exported fields; Parse only discards a single zeroed uint16.
 func TestBuildParseUnlockStage(t *testing.T) {
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	bf := byteframe.NewByteFrame()
 	bf.WriteUint16(0) // Zeroed (discarded by Parse)
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	parsed := &MsgSysUnlockStage{}
 	if err := parsed.Parse(bf, ctx); err != nil {
@@ -1068,7 +1067,7 @@ func TestBuildParseUnlockGlobalSema(t *testing.T) {
 		{"zero", 0},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := &MsgSysUnlockGlobalSema{
@@ -1080,7 +1079,7 @@ func TestBuildParseUnlockGlobalSema(t *testing.T) {
 				t.Fatalf("Build() error = %v", err)
 			}
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgSysUnlockGlobalSema{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -1096,7 +1095,7 @@ func TestBuildParseUnlockGlobalSema(t *testing.T) {
 // TestBuildParseStageDestruct verifies Build/Parse round-trip for MsgSysStageDestruct.
 // This packet has no fields at all.
 func TestBuildParseStageDestruct(t *testing.T) {
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	original := &MsgSysStageDestruct{}
 
 	bf := byteframe.NewByteFrame()
@@ -1117,7 +1116,7 @@ func TestBuildParseStageDestruct(t *testing.T) {
 // TestBuildParseCastedBinaryPayloadIntegrity verifies that a large payload is preserved
 // exactly through Build/Parse for MsgSysCastedBinary.
 func TestBuildParseCastedBinaryPayloadIntegrity(t *testing.T) {
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 
 	// Build a payload with recognizable pattern
 	payload := make([]byte, 1024)
@@ -1137,7 +1136,7 @@ func TestBuildParseCastedBinaryPayloadIntegrity(t *testing.T) {
 		t.Fatalf("Build() error = %v", err)
 	}
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	parsed := &MsgSysCastedBinary{}
 	if err := parsed.Parse(bf, ctx); err != nil {
 		t.Fatalf("Parse() error = %v", err)
@@ -1159,7 +1158,7 @@ func TestBuildParseCastedBinaryPayloadIntegrity(t *testing.T) {
 // manual-build/Parse for MsgSysOperateRegister.
 // Build is NOT IMPLEMENTED, so we manually write the binary representation.
 func TestBuildParseOperateRegisterPayloadIntegrity(t *testing.T) {
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 
 	payload := make([]byte, 512)
 	for i := range payload {
@@ -1173,7 +1172,7 @@ func TestBuildParseOperateRegisterPayloadIntegrity(t *testing.T) {
 	bf.WriteUint16(uint16(len(payload))) // dataSize
 	bf.WriteBytes(payload)
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	parsed := &MsgSysOperateRegister{}
 	if err := parsed.Parse(bf, ctx); err != nil {
 		t.Fatalf("Parse() error = %v", err)
@@ -1189,7 +1188,7 @@ func TestBuildParseOperateRegisterPayloadIntegrity(t *testing.T) {
 // Build is NOT IMPLEMENTED, so we manually write the binary representation.
 // Parse reads: uint32 AckHandle, uint32 GuildID, uint8 zeroed, uint8 charCount.
 func TestBuildParseArrangeGuildMemberEmptySlice(t *testing.T) {
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 
 	bf := byteframe.NewByteFrame()
 	bf.WriteUint32(1)   // AckHandle
@@ -1202,7 +1201,7 @@ func TestBuildParseArrangeGuildMemberEmptySlice(t *testing.T) {
 		t.Errorf("wrote %d bytes, want 10 for empty CharIDs", len(bf.Data()))
 	}
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	parsed := &MsgMhfArrangeGuildMember{}
 	if err := parsed.Parse(bf, ctx); err != nil {
 		t.Fatalf("Parse() error = %v", err)
@@ -1216,7 +1215,7 @@ func TestBuildParseArrangeGuildMemberEmptySlice(t *testing.T) {
 // TestBuildBinaryFormat verifies the exact binary output format of a Build call
 // for MsgSysDuplicateObject to ensure correct endianness and field ordering.
 func TestBuildBinaryFormat(t *testing.T) {
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	pkt := &MsgSysDuplicateObject{
 		ObjID:       0x00000001,
 		X:           0,
@@ -1256,7 +1255,7 @@ func TestBuildBinaryFormat(t *testing.T) {
 // TestBuildParseTimeBooleanEncoding verifies that the boolean field in MsgSysTime
 // is encoded/decoded correctly for both true and false.
 func TestBuildParseTimeBooleanEncoding(t *testing.T) {
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 
 	for _, val := range []bool{true, false} {
 		t.Run("GetRemoteTime="+boolStr(val), func(t *testing.T) {
@@ -1279,7 +1278,7 @@ func TestBuildParseTimeBooleanEncoding(t *testing.T) {
 				t.Errorf("Boolean false encoded as %d, want 0", data[0])
 			}
 
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgSysTime{}
 			if err := parsed.Parse(bf, ctx); err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -1302,7 +1301,7 @@ func boolStr(b bool) string {
 // TestBuildParseSysAckBufferSmall verifies MsgSysAck round-trip with buffer response
 // using the normal (non-extended) size field.
 func TestBuildParseSysAckBufferSmall(t *testing.T) {
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	payload := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
 
 	original := &MsgSysAck{
@@ -1317,7 +1316,7 @@ func TestBuildParseSysAckBufferSmall(t *testing.T) {
 		t.Fatalf("Build() error = %v", err)
 	}
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	parsed := &MsgSysAck{}
 	if err := parsed.Parse(bf, ctx); err != nil {
 		t.Fatalf("Parse() error = %v", err)
@@ -1340,7 +1339,7 @@ func TestBuildParseSysAckBufferSmall(t *testing.T) {
 // TestBuildParseSysAckExtendedSize verifies MsgSysAck round-trip with a payload
 // large enough to trigger the extended size field (>= 0xFFFF bytes).
 func TestBuildParseSysAckExtendedSize(t *testing.T) {
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	payload := make([]byte, 0x10000) // 65536 bytes, triggers extended size
 	for i := range payload {
 		payload[i] = byte(i % 256)
@@ -1358,7 +1357,7 @@ func TestBuildParseSysAckExtendedSize(t *testing.T) {
 		t.Fatalf("Build() error = %v", err)
 	}
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	parsed := &MsgSysAck{}
 	if err := parsed.Parse(bf, ctx); err != nil {
 		t.Fatalf("Parse() error = %v", err)
@@ -1375,7 +1374,7 @@ func TestBuildParseSysAckExtendedSize(t *testing.T) {
 // TestBuildParseSysAckNonBuffer verifies MsgSysAck round-trip with non-buffer response
 // (exactly 4 bytes of data always read in Parse).
 func TestBuildParseSysAckNonBuffer(t *testing.T) {
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	original := &MsgSysAck{
 		AckHandle:        100,
 		IsBufferResponse: false,
@@ -1388,7 +1387,7 @@ func TestBuildParseSysAckNonBuffer(t *testing.T) {
 		t.Fatalf("Build() error = %v", err)
 	}
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	parsed := &MsgSysAck{}
 	if err := parsed.Parse(bf, ctx); err != nil {
 		t.Fatalf("Parse() error = %v", err)

@@ -2,8 +2,11 @@ package channelserver
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"sync"
+	"sync/atomic"
 
 	"erupe-ce/common/byteframe"
 	"erupe-ce/network"
@@ -125,19 +128,19 @@ func TestScenarioSaveErrorHandling(t *testing.T) {
 	// 3. The function should return early after sending fail ACK
 
 	tests := []struct {
-		name        string
+		name         string
 		scenarioData []byte
-		wantError   bool
+		wantError    bool
 	}{
 		{
-			name:        "valid_scenario_data",
+			name:         "valid_scenario_data",
 			scenarioData: []byte{0x01, 0x02, 0x03},
-			wantError:   false,
+			wantError:    false,
 		},
 		{
-			name:        "empty_scenario_data",
+			name:         "empty_scenario_data",
 			scenarioData: []byte{},
-			wantError:   false, // Empty data is valid
+			wantError:    false, // Empty data is valid
 		},
 	}
 
@@ -179,10 +182,10 @@ func TestAckPacketStructure(t *testing.T) {
 			var buf bytes.Buffer
 
 			// Write opcode (2 bytes, big endian)
-			binary.Write(&buf, binary.BigEndian, uint16(network.MSG_SYS_ACK))
+			_ = binary.Write(&buf, binary.BigEndian, uint16(network.MSG_SYS_ACK))
 
 			// Write ack handle (4 bytes, big endian)
-			binary.Write(&buf, binary.BigEndian, tt.ackHandle)
+			_ = binary.Write(&buf, binary.BigEndian, tt.ackHandle)
 
 			// Write data
 			buf.Write(tt.data)
@@ -357,7 +360,7 @@ func TestHandleMsgMhfSavedata_Integration(t *testing.T) {
 	s := createTestSession(mock)
 	s.charID = charID
 	s.Name = "TestChar"
-	s.server.db = db
+	SetTestDB(s.server, db)
 
 	tests := []struct {
 		name        string
@@ -442,10 +445,8 @@ func TestHandleMsgMhfLoaddata_Integration(t *testing.T) {
 	mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 	s := createTestSession(mock)
 	s.charID = charID
-	s.server.db = db
-	s.server.userBinaryParts = make(map[userBinaryPartID][]byte)
-	s.server.userBinaryPartsLock.Lock()
-	defer s.server.userBinaryPartsLock.Unlock()
+	SetTestDB(s.server, db)
+	s.server.userBinary = NewUserBinaryStore()
 
 	pkt := &mhfpacket.MsgMhfLoaddata{
 		AckHandle: 5678,
@@ -477,7 +478,7 @@ func TestHandleMsgMhfSaveScenarioData_Integration(t *testing.T) {
 	mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 	s := createTestSession(mock)
 	s.charID = charID
-	s.server.db = db
+	SetTestDB(s.server, db)
 
 	scenarioData := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A}
 
@@ -532,7 +533,7 @@ func TestHandleMsgMhfLoadScenarioData_Integration(t *testing.T) {
 	mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 	s := createTestSession(mock)
 	s.charID = charID
-	s.server.db = db
+	SetTestDB(s.server, db)
 
 	pkt := &mhfpacket.MsgMhfLoadScenarioData{
 		AckHandle: 1111,
@@ -566,11 +567,12 @@ func TestSaveDataCorruptionDetection_Integration(t *testing.T) {
 	s := createTestSession(mock)
 	s.charID = charID
 	s.Name = "OriginalName"
-	s.server.db = db
+	SetTestDB(s.server, db)
 	s.server.erupeConfig.DeleteOnSaveCorruption = false
 
 	// Create save data with a DIFFERENT name (corruption)
-	corruptedData := make([]byte, 200)
+	// Must be large enough for ZZ save pointer offsets (highest: pKQF at 146728)
+	corruptedData := make([]byte, 150000)
 	copy(corruptedData[88:], []byte("HackedName\x00"))
 	compressed, _ := nullcomp.Compress(corruptedData)
 
@@ -590,7 +592,7 @@ func TestSaveDataCorruptionDetection_Integration(t *testing.T) {
 
 	// Check that database wasn't updated with corrupted data
 	var savedName string
-	db.QueryRow("SELECT name FROM characters WHERE id = $1", charID).Scan(&savedName)
+	_ = db.QueryRow("SELECT name FROM characters WHERE id = $1", charID).Scan(&savedName)
 	if savedName == "HackedName" {
 		t.Error("corrupted save data was incorrectly written to database")
 	}
@@ -616,9 +618,9 @@ func TestConcurrentSaveData_Integration(t *testing.T) {
 			s := createTestSession(mock)
 			s.charID = charIDs[index]
 			s.Name = fmt.Sprintf("Char%d", index)
-			s.server.db = db
+			SetTestDB(s.server, db)
 
-			saveData := make([]byte, 200)
+			saveData := make([]byte, 150000)
 			copy(saveData[88:], []byte(fmt.Sprintf("Char%d\x00", index)))
 			compressed, _ := nullcomp.Compress(saveData)
 
@@ -651,4 +653,251 @@ func TestConcurrentSaveData_Integration(t *testing.T) {
 			t.Errorf("character %d: savedata is empty", i)
 		}
 	}
+}
+
+// =============================================================================
+// Tier 1 protection tests
+// =============================================================================
+
+func TestSaveDataSizeLimit(t *testing.T) {
+	// Verify the size constants are sensible
+	if saveDataMaxCompressedPayload <= 0 {
+		t.Error("saveDataMaxCompressedPayload must be positive")
+	}
+	if saveDataMaxDecompressedPayload <= 0 {
+		t.Error("saveDataMaxDecompressedPayload must be positive")
+	}
+	if saveDataMaxCompressedPayload > saveDataMaxDecompressedPayload {
+		t.Error("compressed limit should not exceed decompressed limit")
+	}
+}
+
+func TestSaveDataSizeLimitRejectsOversized(t *testing.T) {
+	server := createMockServer()
+	session := createMockSession(1, server)
+
+	// Create a payload larger than the limit
+	oversized := make([]byte, saveDataMaxCompressedPayload+1)
+	pkt := &mhfpacket.MsgMhfSavedata{
+		SaveType:       0,
+		AckHandle:      1234,
+		AllocMemSize:   uint32(len(oversized)),
+		DataSize:       uint32(len(oversized)),
+		RawDataPayload: oversized,
+	}
+
+	// This should return early with a fail ACK, not panic
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("handleMsgMhfSavedata panicked on oversized payload: %v", r)
+		}
+	}()
+	handleMsgMhfSavedata(session, pkt)
+}
+
+func TestSaveDataSizeLimitAcceptsNormalPayload(t *testing.T) {
+	// Verify a normal-sized payload passes the size check
+	normalSize := 100000 // 100KB - typical save
+	if normalSize > saveDataMaxCompressedPayload {
+		t.Errorf("normal save size %d exceeds limit %d", normalSize, saveDataMaxCompressedPayload)
+	}
+}
+
+func TestDecompressWithLimitConstants(t *testing.T) {
+	// Verify limits are consistent with known save sizes
+	// ZZ save is ~147KB decompressed; limit should be well above that
+	zzSaveSize := 150000
+	if saveDataMaxDecompressedPayload < zzSaveSize*2 {
+		t.Errorf("decompressed limit %d is too close to known ZZ save size %d",
+			saveDataMaxDecompressedPayload, zzSaveSize)
+	}
+}
+
+func TestBackupConstants(t *testing.T) {
+	if saveBackupSlots <= 0 {
+		t.Error("saveBackupSlots must be positive")
+	}
+	if saveBackupInterval <= 0 {
+		t.Error("saveBackupInterval must be positive")
+	}
+}
+
+// =============================================================================
+// Tier 2 protection tests
+// =============================================================================
+
+func TestSaveDataChecksumRoundTrip(t *testing.T) {
+	// Verify that a hash computed over decompressed data matches after
+	// a compress → decompress round trip (the checksum covers decompressed data).
+	original := make([]byte, 1000)
+	for i := range original {
+		original[i] = byte(i % 256)
+	}
+
+	hash1 := sha256.Sum256(original)
+
+	compressed, err := nullcomp.Compress(original)
+	if err != nil {
+		t.Fatalf("compress: %v", err)
+	}
+
+	decompressed, err := nullcomp.Decompress(compressed)
+	if err != nil {
+		t.Fatalf("decompress: %v", err)
+	}
+
+	hash2 := sha256.Sum256(decompressed)
+
+	if hash1 != hash2 {
+		t.Error("checksum mismatch after compress/decompress round trip")
+	}
+}
+
+func TestSaveDataChecksumDetectsCorruption(t *testing.T) {
+	data := []byte{0x01, 0x02, 0x03, 0x04, 0x05}
+	hash := sha256.Sum256(data)
+
+	// Flip a bit
+	corrupted := make([]byte, len(data))
+	copy(corrupted, data)
+	corrupted[2] ^= 0x01
+
+	corruptedHash := sha256.Sum256(corrupted)
+
+	if bytes.Equal(hash[:], corruptedHash[:]) {
+		t.Error("checksum should differ after bit flip")
+	}
+}
+
+func TestSaveAtomicParamsStructure(t *testing.T) {
+	params := SaveAtomicParams{
+		CharID:     42,
+		CompSave:   []byte{0x01},
+		Hash:       make([]byte, 32),
+		HR:         999,
+		GR:         100,
+		IsFemale:   true,
+		WeaponType: 7,
+		WeaponID:   1234,
+		HouseTier:  []byte{0x01, 0x00, 0x00, 0x00, 0x00},
+	}
+
+	if params.CharID != 42 {
+		t.Error("CharID mismatch")
+	}
+	if len(params.Hash) != 32 {
+		t.Errorf("hash should be 32 bytes, got %d", len(params.Hash))
+	}
+	if params.BackupData != nil {
+		t.Error("BackupData should be nil when no backup requested")
+	}
+}
+
+func TestCharacterLocks_SerializesSameCharacter(t *testing.T) {
+	var locks CharacterLocks
+	var counter int64
+
+	const goroutines = 100
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			unlock := locks.Lock(1) // same charID
+			// Non-atomic increment — if locks don't work, race detector will catch it
+			v := atomic.LoadInt64(&counter)
+			atomic.StoreInt64(&counter, v+1)
+			unlock()
+		}()
+	}
+	wg.Wait()
+
+	if atomic.LoadInt64(&counter) != goroutines {
+		t.Errorf("expected counter=%d, got %d", goroutines, atomic.LoadInt64(&counter))
+	}
+}
+
+func TestCharacterLocks_DifferentCharactersIndependent(t *testing.T) {
+	var locks CharacterLocks
+	var started, finished sync.WaitGroup
+
+	started.Add(1)
+	finished.Add(2)
+
+	// Lock char 1
+	unlock1 := locks.Lock(1)
+
+	// Goroutine trying to lock char 2 should succeed immediately
+	go func() {
+		defer finished.Done()
+		unlock2 := locks.Lock(2) // different char — should not block
+		started.Done()
+		unlock2()
+	}()
+
+	// Wait for char 2 lock to succeed (proves independence)
+	started.Wait()
+	unlock1()
+
+	// Goroutine for char 1 cleanup
+	go func() {
+		defer finished.Done()
+	}()
+
+	finished.Wait()
+}
+
+// =============================================================================
+// Tests consolidated from handlers_coverage4_test.go
+// =============================================================================
+
+func TestGrpToGR(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    int
+		expected uint16
+	}{
+		{"zero", 0, 1},
+		{"low_value", 500, 2},
+		{"first_bracket", 1000, 2},
+		{"mid_bracket", 208750, 51},
+		{"second_bracket", 300000, 62},
+		{"high_value", 593400, 100},
+		{"third_bracket", 700000, 113},
+		{"very_high", 993400, 150},
+		{"above_993400", 1000000, 150},
+		{"fourth_bracket", 1400900, 200},
+		{"max_bracket", 11345900, 900},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := grpToGR(tt.input)
+			if got != tt.expected {
+				t.Errorf("grpToGR(%d) = %d, want %d", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDumpSaveData_Disabled(t *testing.T) {
+	server := createMockServer()
+	server.erupeConfig.SaveDumps.Enabled = false
+	session := createMockSession(1, server)
+
+	// Should return immediately without error
+	dumpSaveData(session, []byte{0x01, 0x02, 0x03}, "test")
+}
+
+func TestHandleMsgSysAuthData(t *testing.T) {
+	server := createMockServer()
+	session := createMockSession(1, server)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("handleMsgSysAuthData panicked: %v", r)
+		}
+	}()
+	handleMsgSysAuthData(session, nil)
 }

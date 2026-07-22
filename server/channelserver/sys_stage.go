@@ -7,12 +7,64 @@ import (
 	"erupe-ce/network/mhfpacket"
 )
 
+// StageMap is a concurrent-safe map of stage ID → *Stage backed by sync.Map.
+// It replaces the former stagesLock + map[string]*Stage pattern, eliminating
+// read contention entirely (reads are lock-free) and allowing concurrent
+// writes to disjoint keys.
+type StageMap struct {
+	m sync.Map
+}
+
+// Get returns the stage for the given ID, or (nil, false) if not found.
+func (sm *StageMap) Get(id string) (*Stage, bool) {
+	v, ok := sm.m.Load(id)
+	if !ok {
+		return nil, false
+	}
+	return v.(*Stage), true
+}
+
+// GetOrCreate atomically returns the existing stage for id, or creates and
+// stores a new one. The second return value is true when a new stage was created.
+func (sm *StageMap) GetOrCreate(id string) (*Stage, bool) {
+	newStage := NewStage(id)
+	v, loaded := sm.m.LoadOrStore(id, newStage)
+	return v.(*Stage), !loaded // created == !loaded
+}
+
+// StoreIfAbsent stores the stage only if the key does not already exist.
+// Returns true if the store succeeded (key was absent).
+func (sm *StageMap) StoreIfAbsent(id string, stage *Stage) bool {
+	_, loaded := sm.m.LoadOrStore(id, stage)
+	return !loaded
+}
+
+// Store unconditionally sets the stage for the given ID.
+func (sm *StageMap) Store(id string, stage *Stage) {
+	sm.m.Store(id, stage)
+}
+
+// Delete removes the stage with the given ID.
+func (sm *StageMap) Delete(id string) {
+	sm.m.Delete(id)
+}
+
+// Range iterates over all stages. The callback receives each (id, stage) pair
+// and should return true to continue iteration or false to stop.
+// It is safe to call Delete during iteration.
+func (sm *StageMap) Range(fn func(id string, stage *Stage) bool) {
+	sm.m.Range(func(key, value any) bool {
+		return fn(key.(string), value.(*Stage))
+	})
+}
+
 // Object holds infomation about a specific object.
 type Object struct {
 	sync.RWMutex
 	id          uint32
 	ownerCharID uint32
 	x, y, z     float32
+	rotation    float32
 }
 
 // stageBinaryKey is a struct used as a map key for identifying a stage binary part.
@@ -78,7 +130,7 @@ func (s *Stage) BroadcastMHF(pkt mhfpacket.MHFPacket, ignoredSession *Session) {
 		bf.WriteUint16(uint16(pkt.Opcode()))
 
 		// Build the packet onto the byteframe.
-		pkt.Build(bf, session.clientContext)
+		_ = pkt.Build(bf, session.clientContext)
 
 		// Enqueue in a non-blocking way that drops the packet if the connections send buffer channel is full.
 		session.QueueSendNonBlocking(bf.Data())

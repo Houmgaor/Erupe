@@ -1,148 +1,45 @@
 package channelserver
 
 import (
-	"encoding/binary"
+	"bytes"
+	"crypto/sha256"
+	"database/sql"
 	"errors"
-	"erupe-ce/common/bfutil"
-	"erupe-ce/common/stringsupport"
-	_config "erupe-ce/config"
+	"fmt"
+	"time"
 
+	cfg "erupe-ce/config"
 	"erupe-ce/network/mhfpacket"
-	"erupe-ce/server/channelserver/compression/nullcomp"
+
 	"go.uber.org/zap"
 )
 
-type SavePointer int
-
+// Backup configuration constants.
 const (
-	pGender        = iota // +1
-	pRP                   // +2
-	pHouseTier            // +5
-	pHouseData            // +195
-	pBookshelfData        // +lBookshelfData
-	pGalleryData          // +1748
-	pToreData             // +240
-	pGardenData           // +68
-	pPlaytime             // +4
-	pWeaponType           // +1
-	pWeaponID             // +2
-	pHR                   // +2
-	pGRP                  // +4
-	pKQF                  // +8
-	lBookshelfData
+	saveBackupSlots    = 3                // number of rotating backup slots per character
+	saveBackupInterval = 30 * time.Minute // minimum time between backups
 )
 
-type CharacterSaveData struct {
-	CharID         uint32
-	Name           string
-	IsNewCharacter bool
-	Pointers       map[SavePointer]int
-
-	Gender        bool
-	RP            uint16
-	HouseTier     []byte
-	HouseData     []byte
-	BookshelfData []byte
-	GalleryData   []byte
-	ToreData      []byte
-	GardenData    []byte
-	Playtime      uint32
-	WeaponType    uint8
-	WeaponID      uint16
-	HR            uint16
-	GR            uint16
-	KQF           []byte
-
-	compSave   []byte
-	decompSave []byte
-}
-
-func getPointers() map[SavePointer]int {
-	pointers := map[SavePointer]int{pGender: 81, lBookshelfData: 5576}
-	switch _config.ErupeConfig.RealClientMode {
-	case _config.ZZ:
-		pointers[pPlaytime] = 128356
-		pointers[pWeaponID] = 128522
-		pointers[pWeaponType] = 128789
-		pointers[pHouseTier] = 129900
-		pointers[pToreData] = 130228
-		pointers[pHR] = 130550
-		pointers[pGRP] = 130556
-		pointers[pHouseData] = 130561
-		pointers[pBookshelfData] = 139928
-		pointers[pGalleryData] = 140064
-		pointers[pGardenData] = 142424
-		pointers[pRP] = 142614
-		pointers[pKQF] = 146720
-	case _config.Z2, _config.Z1, _config.G101, _config.G10, _config.G91, _config.G9, _config.G81, _config.G8,
-		_config.G7, _config.G61, _config.G6, _config.G52, _config.G51, _config.G5, _config.GG, _config.G32, _config.G31,
-		_config.G3, _config.G2, _config.G1:
-		pointers[pPlaytime] = 92356
-		pointers[pWeaponID] = 92522
-		pointers[pWeaponType] = 92789
-		pointers[pHouseTier] = 93900
-		pointers[pToreData] = 94228
-		pointers[pHR] = 94550
-		pointers[pGRP] = 94556
-		pointers[pHouseData] = 94561
-		pointers[pBookshelfData] = 89118 // TODO: fix bookshelf data pointer
-		pointers[pGalleryData] = 104064
-		pointers[pGardenData] = 106424
-		pointers[pRP] = 106614
-		pointers[pKQF] = 110720
-	case _config.F5, _config.F4:
-		pointers[pPlaytime] = 60356
-		pointers[pWeaponID] = 60522
-		pointers[pWeaponType] = 60789
-		pointers[pHouseTier] = 61900
-		pointers[pToreData] = 62228
-		pointers[pHR] = 62550
-		pointers[pHouseData] = 62561
-		pointers[pBookshelfData] = 57118 // TODO: fix bookshelf data pointer
-		pointers[pGalleryData] = 72064
-		pointers[pGardenData] = 74424
-		pointers[pRP] = 74614
-	case _config.S6:
-		pointers[pPlaytime] = 12356
-		pointers[pWeaponID] = 12522
-		pointers[pWeaponType] = 12789
-		pointers[pHouseTier] = 13900
-		pointers[pToreData] = 14228
-		pointers[pHR] = 14550
-		pointers[pHouseData] = 14561
-		pointers[pBookshelfData] = 9118 // TODO: fix bookshelf data pointer
-		pointers[pGalleryData] = 24064
-		pointers[pGardenData] = 26424
-		pointers[pRP] = 26614
-	}
-	if _config.ErupeConfig.RealClientMode == _config.G5 {
-		pointers[lBookshelfData] = 5548
-	} else if _config.ErupeConfig.RealClientMode <= _config.GG {
-		pointers[lBookshelfData] = 4520
-	}
-	return pointers
-}
-
+// GetCharacterSaveData loads a character's save data from the database and
+// verifies its integrity checksum when one is stored.
 func GetCharacterSaveData(s *Session, charID uint32) (*CharacterSaveData, error) {
-	result, err := s.server.db.Query("SELECT id, savedata, is_new_character, name FROM characters WHERE id = $1", charID)
+	id, savedata, isNew, name, storedHash, err := s.server.charRepo.LoadSaveDataWithHash(charID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			s.logger.Error("No savedata found", zap.Uint32("charID", charID))
+			return nil, errors.New("no savedata found")
+		}
 		s.logger.Error("Failed to get savedata", zap.Error(err), zap.Uint32("charID", charID))
-		return nil, err
-	}
-	defer result.Close()
-	if !result.Next() {
-		err = errors.New("no savedata found")
-		s.logger.Error("No savedata found", zap.Uint32("charID", charID))
 		return nil, err
 	}
 
 	saveData := &CharacterSaveData{
-		Pointers: getPointers(),
-	}
-	err = result.Scan(&saveData.CharID, &saveData.compSave, &saveData.IsNewCharacter, &saveData.Name)
-	if err != nil {
-		s.logger.Error("Failed to scan savedata", zap.Error(err), zap.Uint32("charID", charID))
-		return nil, err
+		CharID:         id,
+		compSave:       savedata,
+		IsNewCharacter: isNew,
+		Name:           name,
+		Mode:           s.server.erupeConfig.RealClientMode,
+		Pointers:       getPointers(s.server.erupeConfig.RealClientMode),
 	}
 
 	if saveData.compSave == nil {
@@ -155,12 +52,116 @@ func GetCharacterSaveData(s *Session, charID uint32) (*CharacterSaveData, error)
 		return nil, err
 	}
 
+	// Verify integrity checksum if one was stored with this save.
+	// A nil hash means the character was saved before checksums were introduced,
+	// so we skip verification (the next save will compute and store the hash).
+	// DisableSaveIntegrityCheck bypasses this entirely for cross-server save transfers.
+	if storedHash != nil && !s.server.erupeConfig.DisableSaveIntegrityCheck {
+		computedHash := sha256.Sum256(saveData.decompSave)
+		if !bytes.Equal(storedHash, computedHash[:]) {
+			s.logger.Error("Savedata integrity check failed: hash mismatch — "+
+				"if this character was imported from another server, set DisableSaveIntegrityCheck=true in config.json "+
+				"or run: UPDATE characters SET savedata_hash = NULL WHERE id = <charID>",
+				zap.Uint32("charID", charID),
+				zap.Binary("stored_hash", storedHash),
+				zap.Binary("computed_hash", computedHash[:]),
+			)
+			return recoverFromBackups(s, saveData, charID)
+		}
+	} else if storedHash != nil && s.server.erupeConfig.DisableSaveIntegrityCheck {
+		s.logger.Warn("Savedata integrity check skipped (DisableSaveIntegrityCheck=true)",
+			zap.Uint32("charID", charID),
+		)
+	}
+
 	saveData.updateStructWithSaveData()
 
 	return saveData, nil
 }
 
-func (save *CharacterSaveData) Save(s *Session) {
+// recoverFromBackups is called when the primary savedata fails its integrity check.
+// It queries savedata_backups in recency order and returns the first slot whose
+// compressed blob decompresses cleanly. It never writes to the database — the
+// next successful Save() will overwrite the primary with fresh data and a new hash,
+// self-healing the corruption without any extra recovery writes.
+func recoverFromBackups(s *Session, base *CharacterSaveData, charID uint32) (*CharacterSaveData, error) {
+	backups, err := s.server.charRepo.LoadBackupsByRecency(charID)
+	if err != nil {
+		s.logger.Error("Failed to load savedata backups during recovery",
+			zap.Uint32("charID", charID),
+			zap.Error(err),
+		)
+		return nil, errors.New("savedata integrity check failed")
+	}
+
+	if len(backups) == 0 {
+		s.logger.Error("Savedata corrupted and no backups available",
+			zap.Uint32("charID", charID),
+		)
+		return nil, errors.New("savedata integrity check failed: no backups available")
+	}
+
+	for _, backup := range backups {
+		candidate := &CharacterSaveData{
+			CharID:         base.CharID,
+			IsNewCharacter: base.IsNewCharacter,
+			Name:           base.Name,
+			Mode:           base.Mode,
+			Pointers:       base.Pointers,
+			compSave:       backup.Data,
+		}
+
+		if err := candidate.Decompress(); err != nil {
+			s.logger.Warn("Backup slot decompression failed during recovery, trying next",
+				zap.Uint32("charID", charID),
+				zap.Int("slot", backup.Slot),
+				zap.Time("saved_at", backup.SavedAt),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		// nullcomp passes through data without a "cmp" header as-is (legitimate for
+		// old uncompressed saves). Guard against garbage data that is too small to
+		// contain the minimum save layout (name field at offset 88–100).
+		const minSaveSize = saveFieldNameOffset + saveFieldNameLen
+		if len(candidate.decompSave) < minSaveSize {
+			s.logger.Warn("Backup slot data too small after decompression, skipping",
+				zap.Uint32("charID", charID),
+				zap.Int("slot", backup.Slot),
+				zap.Int("size", len(candidate.decompSave)),
+			)
+			continue
+		}
+
+		s.logger.Warn("Savedata recovered from backup — primary was corrupt",
+			zap.Uint32("charID", charID),
+			zap.Int("slot", backup.Slot),
+			zap.Time("saved_at", backup.SavedAt),
+		)
+		candidate.updateStructWithSaveData()
+		return candidate, nil
+	}
+
+	s.logger.Error("Savedata corrupted and all backup slots failed decompression",
+		zap.Uint32("charID", charID),
+		zap.Int("backups_tried", len(backups)),
+	)
+	return nil, errors.New("savedata integrity check failed: all backup slots exhausted")
+}
+
+func (save *CharacterSaveData) Save(s *Session) error {
+	if save.decompSave == nil {
+		s.logger.Warn("No decompressed save data, skipping save",
+			zap.Uint32("charID", save.CharID),
+		)
+		return errors.New("no decompressed save data")
+	}
+
+	// Capture the previous compressed savedata before it's overwritten by
+	// Compress(). This is what gets backed up — the last known-good state.
+	prevCompSave := save.compSave
+
 	if !s.kqfOverride {
 		s.kqf = save.KQF
 	} else {
@@ -169,88 +170,74 @@ func (save *CharacterSaveData) Save(s *Session) {
 
 	save.updateSaveDataWithStruct()
 
-	if _config.ErupeConfig.RealClientMode >= _config.G1 {
+	if s.server.erupeConfig.RealClientMode >= cfg.G1 {
 		err := save.Compress()
 		if err != nil {
 			s.logger.Error("Failed to compress savedata", zap.Error(err))
-			return
+			return fmt.Errorf("compress savedata: %w", err)
 		}
 	} else {
 		// Saves were not compressed
 		save.compSave = save.decompSave
 	}
 
-	_, err := s.server.db.Exec(`UPDATE characters SET savedata=$1, is_new_character=false, hr=$2, gr=$3, is_female=$4, weapon_type=$5, weapon_id=$6 WHERE id=$7
-	`, save.compSave, save.HR, save.GR, save.Gender, save.WeaponType, save.WeaponID, save.CharID)
-	if err != nil {
-		s.logger.Error("Failed to update savedata", zap.Error(err), zap.Uint32("charID", save.CharID))
+	// Compute integrity hash over the decompressed save.
+	hash := sha256.Sum256(save.decompSave)
+
+	// Build the atomic save params — character data, house data, hash, and
+	// optionally a backup snapshot, all in one transaction.
+	params := SaveAtomicParams{
+		CharID:        save.CharID,
+		CompSave:      save.compSave,
+		Hash:          hash[:],
+		HR:            save.HR,
+		GR:            save.GR,
+		IsFemale:      save.Gender,
+		WeaponType:    save.WeaponType,
+		WeaponID:      save.WeaponID,
+		HouseTier:     save.HouseTier,
+		HouseData:     save.HouseData,
+		BookshelfData: save.BookshelfData,
+		GalleryData:   save.GalleryData,
+		ToreData:      save.ToreData,
+		GardenData:    save.GardenData,
 	}
 
-	s.server.db.Exec(`UPDATE user_binary SET house_tier=$1, house_data=$2, bookshelf=$3, gallery=$4, tore=$5, garden=$6 WHERE id=$7
-	`, save.HouseTier, save.HouseData, save.BookshelfData, save.GalleryData, save.ToreData, save.GardenData, s.charID)
-}
-
-func (save *CharacterSaveData) Compress() error {
-	var err error
-	save.compSave, err = nullcomp.Compress(save.decompSave)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (save *CharacterSaveData) Decompress() error {
-	var err error
-	save.decompSave, err = nullcomp.Decompress(save.compSave)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// This will update the character save with the values stored in the save struct
-func (save *CharacterSaveData) updateSaveDataWithStruct() {
-	rpBytes := make([]byte, 2)
-	binary.LittleEndian.PutUint16(rpBytes, save.RP)
-	if _config.ErupeConfig.RealClientMode >= _config.F4 {
-		copy(save.decompSave[save.Pointers[pRP]:save.Pointers[pRP]+2], rpBytes)
-	}
-	if _config.ErupeConfig.RealClientMode >= _config.G10 {
-		copy(save.decompSave[save.Pointers[pKQF]:save.Pointers[pKQF]+8], save.KQF)
-	}
-}
-
-// This will update the save struct with the values stored in the character save
-func (save *CharacterSaveData) updateStructWithSaveData() {
-	save.Name = stringsupport.SJISToUTF8(bfutil.UpToNull(save.decompSave[88:100]))
-	if save.decompSave[save.Pointers[pGender]] == 1 {
-		save.Gender = true
-	} else {
-		save.Gender = false
-	}
-	if !save.IsNewCharacter {
-		if _config.ErupeConfig.RealClientMode >= _config.S6 {
-			save.RP = binary.LittleEndian.Uint16(save.decompSave[save.Pointers[pRP] : save.Pointers[pRP]+2])
-			save.HouseTier = save.decompSave[save.Pointers[pHouseTier] : save.Pointers[pHouseTier]+5]
-			save.HouseData = save.decompSave[save.Pointers[pHouseData] : save.Pointers[pHouseData]+195]
-			save.BookshelfData = save.decompSave[save.Pointers[pBookshelfData] : save.Pointers[pBookshelfData]+save.Pointers[lBookshelfData]]
-			save.GalleryData = save.decompSave[save.Pointers[pGalleryData] : save.Pointers[pGalleryData]+1748]
-			save.ToreData = save.decompSave[save.Pointers[pToreData] : save.Pointers[pToreData]+240]
-			save.GardenData = save.decompSave[save.Pointers[pGardenData] : save.Pointers[pGardenData]+68]
-			save.Playtime = binary.LittleEndian.Uint32(save.decompSave[save.Pointers[pPlaytime] : save.Pointers[pPlaytime]+4])
-			save.WeaponType = save.decompSave[save.Pointers[pWeaponType]]
-			save.WeaponID = binary.LittleEndian.Uint16(save.decompSave[save.Pointers[pWeaponID] : save.Pointers[pWeaponID]+2])
-			save.HR = binary.LittleEndian.Uint16(save.decompSave[save.Pointers[pHR] : save.Pointers[pHR]+2])
-			if _config.ErupeConfig.RealClientMode >= _config.G1 {
-				if save.HR == uint16(999) {
-					save.GR = grpToGR(int(binary.LittleEndian.Uint32(save.decompSave[save.Pointers[pGRP] : save.Pointers[pGRP]+4])))
-				}
-			}
-			if _config.ErupeConfig.RealClientMode >= _config.G10 {
-				save.KQF = save.decompSave[save.Pointers[pKQF] : save.Pointers[pKQF]+8]
-			}
+	// Time-gated rotating backup: include the previous compressed savedata
+	// in the transaction if enough time has elapsed since the last backup.
+	if len(prevCompSave) > 0 {
+		if slot, ok := shouldBackup(s, save.CharID); ok {
+			params.BackupSlot = slot
+			params.BackupData = prevCompSave
 		}
 	}
+
+	if err := s.server.charRepo.SaveCharacterDataAtomic(params); err != nil {
+		s.logger.Error("Failed to save character data atomically",
+			zap.Error(err), zap.Uint32("charID", save.CharID))
+		return fmt.Errorf("atomic save: %w", err)
+	}
+
+	return nil
+}
+
+// shouldBackup checks whether enough time has elapsed since the last backup
+// and returns the target slot if a backup should be included in the save
+// transaction. Returns (slot, true) if a backup is due, (0, false) otherwise.
+func shouldBackup(s *Session, charID uint32) (int, bool) {
+	lastBackup, err := s.server.charRepo.GetLastBackupTime(charID)
+	if err != nil {
+		s.logger.Warn("Failed to query last backup time, skipping backup",
+			zap.Error(err), zap.Uint32("charID", charID))
+		return 0, false
+	}
+
+	if time.Since(lastBackup) < saveBackupInterval {
+		return 0, false
+	}
+
+	slot := int(lastBackup.Unix()/int64(saveBackupInterval.Seconds())) % saveBackupSlots
+	return slot, true
 }
 
 func handleMsgMhfSexChanger(s *Session, p mhfpacket.MHFPacket) {

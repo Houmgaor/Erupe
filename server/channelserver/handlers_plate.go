@@ -31,16 +31,26 @@ import (
 
 func handleMsgMhfLoadPlateData(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfLoadPlateData)
-	var data []byte
-	err := s.server.db.QueryRow("SELECT platedata FROM characters WHERE id = $1", s.charID).Scan(&data)
-	if err != nil {
-		s.logger.Error("Failed to load platedata", zap.Error(err))
-	}
-	doAckBufSucceed(s, pkt.AckHandle, data)
+	loadCharacterData(s, pkt.AckHandle, "platedata", nil)
 }
+
+// Plate data size constants
+const (
+	plateDataMaxPayload  = 262144 // max compressed platedata size
+	plateDataEmptySize   = 140000 // empty platedata buffer
+	plateBoxMaxPayload   = 32768  // max compressed platebox size
+	plateBoxEmptySize    = 4800   // empty platebox buffer
+	plateMysetDefaultLen = 1920   // default platemyset buffer
+	plateMysetMaxPayload = 4096   // max platemyset payload size
+)
 
 func handleMsgMhfSavePlateData(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSavePlateData)
+	if len(pkt.RawDataPayload) > plateDataMaxPayload {
+		s.logger.Warn("PlateData payload too large", zap.Int("len", len(pkt.RawDataPayload)))
+		doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
+		return
+	}
 	saveStart := time.Now()
 
 	s.logger.Debug("PlateData save request",
@@ -54,7 +64,7 @@ func handleMsgMhfSavePlateData(s *Session, p mhfpacket.MHFPacket) {
 		var data []byte
 
 		// Load existing save
-		err := s.server.db.QueryRow("SELECT platedata FROM characters WHERE id = $1", s.charID).Scan(&data)
+		data, err := s.server.charRepo.LoadColumn(s.charID, "platedata")
 		if err != nil {
 			s.logger.Error("Failed to load platedata",
 				zap.Error(err),
@@ -67,7 +77,7 @@ func handleMsgMhfSavePlateData(s *Session, p mhfpacket.MHFPacket) {
 		if len(data) > 0 {
 			// Decompress
 			s.logger.Debug("Decompressing PlateData", zap.Int("compressed_size", len(data)))
-			data, err = nullcomp.Decompress(data)
+			data, err = nullcomp.DecompressWithLimit(data, plateDataMaxPayload)
 			if err != nil {
 				s.logger.Error("Failed to decompress platedata",
 					zap.Error(err),
@@ -78,12 +88,21 @@ func handleMsgMhfSavePlateData(s *Session, p mhfpacket.MHFPacket) {
 			}
 		} else {
 			// create empty save if absent
-			data = make([]byte, 140000)
+			data = make([]byte, plateDataEmptySize)
 		}
 
-		// Perform diff and compress it to write back to db
+		// Perform diff with bounds checking and compress it to write back to db
 		s.logger.Debug("Applying PlateData diff", zap.Int("base_size", len(data)))
-		saveOutput, err := nullcomp.Compress(deltacomp.ApplyDataDiff(pkt.RawDataPayload, data))
+		patched, err := deltacomp.ApplyDataDiffWithLimit(pkt.RawDataPayload, data, plateDataMaxPayload)
+		if err != nil {
+			s.logger.Error("Failed to apply platedata diff",
+				zap.Error(err),
+				zap.Uint32("charID", s.charID),
+			)
+			doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+			return
+		}
+		saveOutput, err := nullcomp.Compress(patched)
 		if err != nil {
 			s.logger.Error("Failed to diff and compress platedata",
 				zap.Error(err),
@@ -94,7 +113,7 @@ func handleMsgMhfSavePlateData(s *Session, p mhfpacket.MHFPacket) {
 		}
 		dataSize = len(saveOutput)
 
-		_, err = s.server.db.Exec("UPDATE characters SET platedata=$1 WHERE id=$2", saveOutput, s.charID)
+		err = s.server.charRepo.SaveColumn(s.charID, "platedata", saveOutput)
 		if err != nil {
 			s.logger.Error("Failed to save platedata",
 				zap.Error(err),
@@ -108,7 +127,7 @@ func handleMsgMhfSavePlateData(s *Session, p mhfpacket.MHFPacket) {
 		dataSize = len(pkt.RawDataPayload)
 
 		// simply update database, no extra processing
-		_, err := s.server.db.Exec("UPDATE characters SET platedata=$1 WHERE id=$2", pkt.RawDataPayload, s.charID)
+		err := s.server.charRepo.SaveColumn(s.charID, "platedata", pkt.RawDataPayload)
 		if err != nil {
 			s.logger.Error("Failed to save platedata",
 				zap.Error(err),
@@ -121,10 +140,8 @@ func handleMsgMhfSavePlateData(s *Session, p mhfpacket.MHFPacket) {
 
 	// Invalidate user binary cache so other players see updated appearance
 	// User binary types 2 and 3 contain equipment/appearance data
-	s.server.userBinaryPartsLock.Lock()
-	delete(s.server.userBinaryParts, userBinaryPartID{charID: s.charID, index: 2})
-	delete(s.server.userBinaryParts, userBinaryPartID{charID: s.charID, index: 3})
-	s.server.userBinaryPartsLock.Unlock()
+	s.server.userBinary.Delete(s.charID, 2)
+	s.server.userBinary.Delete(s.charID, 3)
 
 	saveDuration := time.Since(saveStart)
 	s.logger.Info("PlateData saved successfully",
@@ -139,22 +156,22 @@ func handleMsgMhfSavePlateData(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfLoadPlateBox(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfLoadPlateBox)
-	var data []byte
-	err := s.server.db.QueryRow("SELECT platebox FROM characters WHERE id = $1", s.charID).Scan(&data)
-	if err != nil {
-		s.logger.Error("Failed to load platebox", zap.Error(err))
-	}
-	doAckBufSucceed(s, pkt.AckHandle, data)
+	loadCharacterData(s, pkt.AckHandle, "platebox", nil)
 }
 
 func handleMsgMhfSavePlateBox(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSavePlateBox)
+	if len(pkt.RawDataPayload) > plateBoxMaxPayload {
+		s.logger.Warn("PlateBox payload too large", zap.Int("len", len(pkt.RawDataPayload)))
+		doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
+		return
+	}
 
 	if pkt.IsDataDiff {
 		var data []byte
 
 		// Load existing save
-		err := s.server.db.QueryRow("SELECT platebox FROM characters WHERE id = $1", s.charID).Scan(&data)
+		data, err := s.server.charRepo.LoadColumn(s.charID, "platebox")
 		if err != nil {
 			s.logger.Error("Failed to load platebox", zap.Error(err))
 			doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
@@ -165,7 +182,7 @@ func handleMsgMhfSavePlateBox(s *Session, p mhfpacket.MHFPacket) {
 		if len(data) > 0 {
 			// Decompress
 			s.logger.Info("Decompressing...")
-			data, err = nullcomp.Decompress(data)
+			data, err = nullcomp.DecompressWithLimit(data, plateBoxMaxPayload)
 			if err != nil {
 				s.logger.Error("Failed to decompress platebox", zap.Error(err))
 				doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
@@ -173,19 +190,25 @@ func handleMsgMhfSavePlateBox(s *Session, p mhfpacket.MHFPacket) {
 			}
 		} else {
 			// create empty save if absent
-			data = make([]byte, 4800)
+			data = make([]byte, plateBoxEmptySize)
 		}
 
-		// Perform diff and compress it to write back to db
+		// Perform diff with bounds checking and compress it to write back to db
 		s.logger.Info("Diffing...")
-		saveOutput, err := nullcomp.Compress(deltacomp.ApplyDataDiff(pkt.RawDataPayload, data))
+		patched, err := deltacomp.ApplyDataDiffWithLimit(pkt.RawDataPayload, data, plateBoxMaxPayload)
+		if err != nil {
+			s.logger.Error("Failed to apply platebox diff", zap.Error(err))
+			doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+			return
+		}
+		saveOutput, err := nullcomp.Compress(patched)
 		if err != nil {
 			s.logger.Error("Failed to diff and compress platebox", zap.Error(err))
 			doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 			return
 		}
 
-		_, err = s.server.db.Exec("UPDATE characters SET platebox=$1 WHERE id=$2", saveOutput, s.charID)
+		err = s.server.charRepo.SaveColumn(s.charID, "platebox", saveOutput)
 		if err != nil {
 			s.logger.Error("Failed to save platebox", zap.Error(err))
 			doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
@@ -196,34 +219,31 @@ func handleMsgMhfSavePlateBox(s *Session, p mhfpacket.MHFPacket) {
 	} else {
 		dumpSaveData(s, pkt.RawDataPayload, "platebox")
 		// simply update database, no extra processing
-		_, err := s.server.db.Exec("UPDATE characters SET platebox=$1 WHERE id=$2", pkt.RawDataPayload, s.charID)
+		err := s.server.charRepo.SaveColumn(s.charID, "platebox", pkt.RawDataPayload)
 		if err != nil {
 			s.logger.Error("Failed to save platebox", zap.Error(err))
 		}
 	}
 
 	// Invalidate user binary cache so other players see updated appearance
-	s.server.userBinaryPartsLock.Lock()
-	delete(s.server.userBinaryParts, userBinaryPartID{charID: s.charID, index: 2})
-	delete(s.server.userBinaryParts, userBinaryPartID{charID: s.charID, index: 3})
-	s.server.userBinaryPartsLock.Unlock()
+	s.server.userBinary.Delete(s.charID, 2)
+	s.server.userBinary.Delete(s.charID, 3)
 
 	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfLoadPlateMyset(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfLoadPlateMyset)
-	var data []byte
-	err := s.server.db.QueryRow("SELECT platemyset FROM characters WHERE id = $1", s.charID).Scan(&data)
-	if len(data) == 0 {
-		s.logger.Error("Failed to load platemyset", zap.Error(err))
-		data = make([]byte, 1920)
-	}
-	doAckBufSucceed(s, pkt.AckHandle, data)
+	loadCharacterData(s, pkt.AckHandle, "platemyset", make([]byte, plateMysetDefaultLen))
 }
 
 func handleMsgMhfSavePlateMyset(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSavePlateMyset)
+	if len(pkt.RawDataPayload) > plateMysetMaxPayload {
+		s.logger.Warn("PlateMyset payload too large", zap.Int("len", len(pkt.RawDataPayload)))
+		doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
+		return
+	}
 	saveStart := time.Now()
 
 	s.logger.Debug("PlateMyset save request",
@@ -233,7 +253,7 @@ func handleMsgMhfSavePlateMyset(s *Session, p mhfpacket.MHFPacket) {
 
 	// looks to always return the full thing, simply update database, no extra processing
 	dumpSaveData(s, pkt.RawDataPayload, "platemyset")
-	_, err := s.server.db.Exec("UPDATE characters SET platemyset=$1 WHERE id=$2", pkt.RawDataPayload, s.charID)
+	err := s.server.charRepo.SaveColumn(s.charID, "platemyset", pkt.RawDataPayload)
 	if err != nil {
 		s.logger.Error("Failed to save platemyset",
 			zap.Error(err),
@@ -249,10 +269,8 @@ func handleMsgMhfSavePlateMyset(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	// Invalidate user binary cache so other players see updated appearance
-	s.server.userBinaryPartsLock.Lock()
-	delete(s.server.userBinaryParts, userBinaryPartID{charID: s.charID, index: 2})
-	delete(s.server.userBinaryParts, userBinaryPartID{charID: s.charID, index: 3})
-	s.server.userBinaryPartsLock.Unlock()
+	s.server.userBinary.Delete(s.charID, 2)
+	s.server.userBinary.Delete(s.charID, 3)
 
 	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }

@@ -287,4 +287,3 @@ func TestStageNewMaxPlayers(t *testing.T) {
 		t.Errorf("initial maxPlayers = %d, want 127", stage.maxPlayers)
 	}
 }
-

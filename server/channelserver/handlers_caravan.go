@@ -5,72 +5,71 @@ import (
 	"erupe-ce/common/stringsupport"
 	"erupe-ce/network/mhfpacket"
 	"time"
+
+	"go.uber.org/zap"
 )
 
-type RyoudamaReward struct {
-	Unk0 uint8
-	Unk1 uint8
-	Unk2 uint16
-	Unk3 uint16
-	Unk4 uint16
-	Unk5 uint16
-}
-
-type RyoudamaKeyScore struct {
-	Unk0 uint8
-	Unk1 int32
-}
-
+// RyoudamaCharInfo represents one entry of the personal caravan ranking.
+// Unk0 is populated with the character's caravan points -- this mirrors the
+// pre-existing struct shape (CID/Unk0/Name) rather than a byte-confirmed
+// field semantic.
 type RyoudamaCharInfo struct {
 	CID  uint32
 	Unk0 int32
 	Name string
 }
 
+// RyoudamaBoostInfo represents caravan boost status. No data source or wire
+// layout is known for this yet -- always empty.
 type RyoudamaBoostInfo struct {
 	Start time.Time
 	End   time.Time
 }
 
-type Ryoudama struct {
-	Reward    []RyoudamaReward
-	KeyScore  []RyoudamaKeyScore
-	CharInfo  []RyoudamaCharInfo
-	BoostInfo []RyoudamaBoostInfo
-	Score     []int32
-}
-
 func handleMsgMhfGetRyoudama(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetRyoudama)
 	var data []*byteframe.ByteFrame
-	ryoudama := Ryoudama{Score: []int32{0}}
 	switch pkt.Request2 {
 	case 4:
-		for _, score := range ryoudama.Score {
-			bf := byteframe.NewByteFrame()
-			bf.WriteInt32(score)
-			data = append(data, bf)
+		// Note: CharacterSaveData.CP (model_character.go) is a separate,
+		// already-shipped "caravan points" value read/written directly from
+		// the ZZ save blob -- it is NOT synced with caravanRepo's points
+		// here. They likely represent the same real-world value but were
+		// deliberately left unreconciled in this pass.
+		points, err := s.server.caravanRepo.GetPoints(s.charID)
+		if err != nil {
+			s.logger.Error("Failed to get caravan points", zap.Error(err))
 		}
+		bf := byteframe.NewByteFrame()
+		bf.WriteInt32(points.Points)
+		data = append(data, bf)
 	case 5:
-		for _, info := range ryoudama.CharInfo {
+		ranking, err := s.server.caravanRepo.GetPersonalRanking()
+		if err != nil {
+			s.logger.Error("Failed to get caravan personal ranking", zap.Error(err))
+		}
+		for _, entry := range ranking {
 			bf := byteframe.NewByteFrame()
-			bf.WriteUint32(info.CID)
-			bf.WriteInt32(info.Unk0)
-			bf.WriteBytes(stringsupport.PaddedString(info.Name, 14, true))
+			bf.WriteUint32(entry.CharID)
+			bf.WriteInt32(entry.Points)
+			bf.WriteBytes(stringsupport.PaddedString(entry.Name, 14, true))
 			data = append(data, bf)
 		}
 	case 6:
-		for _, info := range ryoudama.BoostInfo {
-			bf := byteframe.NewByteFrame()
-			bf.WriteUint32(uint32(info.Start.Unix()))
-			bf.WriteUint32(uint32(info.End.Unix()))
-			data = append(data, bf)
-		}
+		// No known data source for caravan "boost" status; left empty.
 	}
 	doAckEarthSucceed(s, pkt.AckHandle, data)
 }
 
-func handleMsgMhfPostRyoudama(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfPostRyoudama(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgMhfPostRyoudama)
+	// Request payload beyond AckHandle is unconfirmed, so this doesn't
+	// trust client-submitted values -- points are credited server-side from
+	// the quest-clear path instead. Previously this handler sent no ACK at
+	// all, which is a likely softlock source for any client awaiting this
+	// response.
+	doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
+}
 
 func handleMsgMhfGetTinyBin(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetTinyBin)
@@ -83,41 +82,29 @@ func handleMsgMhfPostTinyBin(s *Session, p mhfpacket.MHFPacket) {
 	doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
 }
 
+// handleMsgMhfCaravanMyScore, handleMsgMhfCaravanRanking, and
+// handleMsgMhfCaravanMyRank intentionally still return an empty ACK.
+// Unlike GetRyoudama, no pre-existing struct/serialization shape exists for
+// these three in Erupe, and the only prior guess at a wire format (dead,
+// commented-out code from the since-superseded feature/conquest branch) was
+// never confirmed against the real client. Sending an unconfirmed non-empty
+// payload risks a worse outcome (client misparse/crash) than the current
+// known-safe empty response.
+
 func handleMsgMhfCaravanMyScore(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfCaravanMyScore)
 	var data []*byteframe.ByteFrame
-	/*
-		bf.WriteInt32(0)
-		bf.WriteInt32(0)
-		bf.WriteInt32(0)
-		bf.WriteInt32(0)
-	*/
 	doAckEarthSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfCaravanRanking(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfCaravanRanking)
 	var data []*byteframe.ByteFrame
-	/* RYOUDAN
-	bf.WriteInt32(1)
-	bf.WriteUint32(2)
-	bf.WriteBytes(stringsupport.PaddedString("Test", 26, true))
-	*/
-
-	/* PERSONAL
-	bf.WriteInt32(1)
-	bf.WriteBytes(stringsupport.PaddedString("Test", 14, true))
-	*/
 	doAckEarthSucceed(s, pkt.AckHandle, data)
 }
 
 func handleMsgMhfCaravanMyRank(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfCaravanMyRank)
 	var data []*byteframe.ByteFrame
-	/*
-		bf.WriteInt32(0)
-		bf.WriteInt32(0)
-		bf.WriteInt32(0)
-	*/
 	doAckEarthSucceed(s, pkt.AckHandle, data)
 }

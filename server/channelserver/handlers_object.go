@@ -1,10 +1,10 @@
 package channelserver
 
 import (
-	"fmt"
-
 	"erupe-ce/common/byteframe"
 	"erupe-ce/network/mhfpacket"
+
+	"go.uber.org/zap"
 )
 
 func handleMsgSysCreateObject(s *Session, p mhfpacket.MHFPacket) {
@@ -34,16 +34,43 @@ func handleMsgSysCreateObject(s *Session, p mhfpacket.MHFPacket) {
 		OwnerCharID: newObj.ownerCharID,
 	}
 
-	s.logger.Info(fmt.Sprintf("Broadcasting new object: %s (%d)", s.Name, newObj.id))
+	s.logger.Info("Broadcasting new object", zap.String("name", s.Name), zap.Uint32("objectID", newObj.id))
 	s.stage.BroadcastMHF(dupObjUpdate, s)
 }
 
-func handleMsgSysDeleteObject(s *Session, p mhfpacket.MHFPacket) {}
+// handleMsgSysDeleteObject removes the sender's own synced stage object and
+// relays the deletion to the rest of the stage, mirroring the same
+// remove-then-broadcast pattern already used server-side when a client
+// leaves a stage (see removeSessionFromStage). A client may only delete the
+// object it owns -- the requested ObjID must match the object on record for
+// the sender's charID, or the request is dropped.
+func handleMsgSysDeleteObject(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgSysDeleteObject)
+
+	s.stage.Lock()
+	object, ok := s.stage.objects[s.charID]
+	if ok && object.id == pkt.ObjID {
+		delete(s.stage.objects, s.charID)
+	} else {
+		ok = false
+	}
+	s.stage.Unlock()
+
+	if ok {
+		s.stage.BroadcastMHF(pkt, s)
+	}
+}
 
 func handleMsgSysPositionObject(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysPositionObject)
 	if s.server.erupeConfig.DebugOptions.LogInboundMessages {
-		fmt.Printf("[%s] with objectID [%d] move to (%f,%f,%f)\n\n", s.Name, pkt.ObjID, pkt.X, pkt.Y, pkt.Z)
+		s.logger.Debug("Object position update",
+			zap.String("name", s.Name),
+			zap.Uint32("objectID", pkt.ObjID),
+			zap.Float32("x", pkt.X),
+			zap.Float32("y", pkt.Y),
+			zap.Float32("z", pkt.Z),
+		)
 	}
 	s.stage.Lock()
 	object, ok := s.stage.objects[s.charID]
@@ -57,18 +84,30 @@ func handleMsgSysPositionObject(s *Session, p mhfpacket.MHFPacket) {
 	s.stage.BroadcastMHF(pkt, s)
 }
 
-func handleMsgSysRotateObject(s *Session, p mhfpacket.MHFPacket) {}
+// handleMsgSysRotateObject mirrors handleMsgSysPositionObject's pattern:
+// update the sender's own synced stage object and re-broadcast the same
+// packet to the rest of the stage so other clients turn the model to match.
+func handleMsgSysRotateObject(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgSysRotateObject)
 
-func handleMsgSysDuplicateObject(s *Session, p mhfpacket.MHFPacket) {}
+	s.stage.Lock()
+	object, ok := s.stage.objects[s.charID]
+	if ok {
+		object.rotation = pkt.Rotation
+	}
+	s.stage.Unlock()
+
+	s.stage.BroadcastMHF(pkt, s)
+}
+
+func handleMsgSysDuplicateObject(s *Session, p mhfpacket.MHFPacket) {} // stub: unimplemented
 
 func handleMsgSysSetObjectBinary(s *Session, p mhfpacket.MHFPacket) {
 	_ = p.(*mhfpacket.MsgSysSetObjectBinary)
 	/* This causes issues with PS3 as this actually sends with endiness!
 	for _, session := range s.server.sessions {
 		if session.charID == s.charID {
-			s.server.userBinaryPartsLock.Lock()
-			s.server.userBinaryParts[userBinaryPartID{charID: s.charID, index: 3}] = pkt.RawDataPayload
-			s.server.userBinaryPartsLock.Unlock()
+			s.server.userBinary.Set(s.charID, 3, pkt.RawDataPayload)
 			msg := &mhfpacket.MsgSysNotifyUserBinary{
 				CharID:     s.charID,
 				BinaryType: 3,
@@ -79,18 +118,47 @@ func handleMsgSysSetObjectBinary(s *Session, p mhfpacket.MHFPacket) {
 	*/
 }
 
-func handleMsgSysGetObjectBinary(s *Session, p mhfpacket.MHFPacket) {}
+// handleMsgSysGetObjectBinary answers a request for another stage object's
+// synced binary state. Erupe doesn't persist per-object binary payloads yet
+// (see handleMsgSysSetObjectBinary's PS3-endianness caveat above), so this
+// always acks a zero-length result -- the same "not found" shape the PC
+// client itself falls back to when its local lookup misses (decompiled
+// pkt_handler_MSG_SYS_GET_OBJECT_BINARY replies with a zero-length payload
+// rather than an error ack), so a real client handles this gracefully.
+func handleMsgSysGetObjectBinary(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgSysGetObjectBinary)
+	doAckBufSucceed(s, pkt.AckHandle, []byte{})
+}
 
-func handleMsgSysGetObjectOwner(s *Session, p mhfpacket.MHFPacket) {}
+// handleMsgSysGetObjectOwner answers a request for the owning character of a
+// stage object, resolved from the same s.stage.objects map handleMsgSysCreateObject
+// populates and handleMsgSysDeleteObject prunes.
+func handleMsgSysGetObjectOwner(s *Session, p mhfpacket.MHFPacket) {
+	pkt := p.(*mhfpacket.MsgSysGetObjectOwner)
 
-func handleMsgSysUpdateObjectBinary(s *Session, p mhfpacket.MHFPacket) {}
+	var ownerCharID uint32
+	s.stage.RLock()
+	for _, object := range s.stage.objects {
+		if object.id == pkt.ObjID {
+			ownerCharID = object.ownerCharID
+			break
+		}
+	}
+	s.stage.RUnlock()
 
-func handleMsgSysCleanupObject(s *Session, p mhfpacket.MHFPacket) {}
+	resp := byteframe.NewByteFrame()
+	resp.WriteUint32(ownerCharID)
+	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
+}
 
-func handleMsgSysAddObject(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgSysUpdateObjectBinary(s *Session, p mhfpacket.MHFPacket) {} // stub: unimplemented
 
-func handleMsgSysDelObject(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgSysCleanupObject(s *Session, p mhfpacket.MHFPacket) {} // stub: unimplemented
 
-func handleMsgSysDispObject(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgSysAddObject(s *Session, p mhfpacket.MHFPacket) {} // stub: unimplemented
 
-func handleMsgSysHideObject(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgSysDelObject(s *Session, p mhfpacket.MHFPacket) {} // stub: unimplemented
+
+func handleMsgSysDispObject(s *Session, p mhfpacket.MHFPacket) {} // stub: unimplemented
+
+func handleMsgSysHideObject(s *Session, p mhfpacket.MHFPacket) {} // stub: unimplemented

@@ -1,19 +1,22 @@
 .idea/
 
-www/jp/
 vendor/
 *.bin
-savedata/*/
 *.exe
 *.lnk
 *.bat
 /docker/db-data
+/docker/savedata
+/docker/bin
+/docker/config.json
 screenshots/*
 
 # We don't need built files
-erupe-ce
-erupe
-tools/loganalyzer/loganalyzer
+/erupe-ce
+/erupe
+/protbot
+/positiontap
+/tools/loganalyzer/loganalyzer
 
 # config is install dependent
 config.json
@@ -24,3 +27,18 @@ logs/
 
 # Deployment scripts
 deploy.sh
+
+# Editor artifacts
+*.swp
+*.swo
+*~
+
+# Test/build artifacts
+coverage.out
+
+# Local save blob dumps (PII)
+tmp/
+
+# Claude Code local config
+.claude/
+CLAUDE.local.md

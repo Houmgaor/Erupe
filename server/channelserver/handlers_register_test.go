@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"erupe-ce/common/byteframe"
-	"erupe-ce/network/mhfpacket"
 )
 
 // createMockServerWithRaviente creates a mock server with raviente and semaphore
@@ -25,9 +24,6 @@ func TestRavienteInitialization(t *testing.T) {
 		register: make([]uint32, 30),
 		state:    make([]uint32, 30),
 		support:  make([]uint32, 30),
-	}
-	if r == nil {
-		t.Fatal("Raviente is nil")
 	}
 	if len(r.register) != 30 {
 		t.Errorf("register length = %d, want 30", len(r.register))
@@ -172,7 +168,8 @@ func TestHandlerTableRegistered(t *testing.T) {
 	}
 
 	// Verify handler table is populated
-	if len(handlerTable) == 0 {
+	table := buildHandlerTable()
+	if len(table) == 0 {
 		t.Error("handlers table should not be empty")
 	}
 
@@ -185,8 +182,8 @@ func TestHandlerTableRegistered(t *testing.T) {
 	_ = criticalHandlers // We just verify the table is non-empty since handler function names aren't directly accessible
 
 	// Verify minimum handler count
-	if len(handlerTable) < 50 {
-		t.Errorf("handlers count = %d, expected at least 50", len(handlerTable))
+	if len(table) < 50 {
+		t.Errorf("handlers count = %d, expected at least 50", len(table))
 	}
 }
 
@@ -195,8 +192,9 @@ func TestHandlerTableNilSession(t *testing.T) {
 	// but doesn't call handlers (which would require a real session)
 	_ = createMockServer()
 
+	table := buildHandlerTable()
 	count := 0
-	for range handlerTable {
+	for range table {
 		count++
 	}
 
@@ -221,9 +219,4 @@ func TestMockServerPacketHandling(t *testing.T) {
 		t.Errorf("ByteFrame length = %d, want 4", len(bf.Data()))
 	}
 
-	// Verify packet types can be instantiated
-	pkt := &mhfpacket.MsgSysAck{}
-	if pkt == nil {
-		t.Error("Failed to create MsgSysAck")
-	}
 }

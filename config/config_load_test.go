@@ -1,9 +1,12 @@
-package _config
+package config
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 // TestLoadConfigNoFile tests LoadConfig when config file doesn't exist
@@ -14,7 +17,7 @@ func TestLoadConfigNoFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get working directory: %v", err)
 	}
-	defer os.Chdir(oldWd)
+	defer func() { _ = os.Chdir(oldWd) }()
 
 	if err := os.Chdir(tmpDir); err != nil {
 		t.Fatalf("Failed to change directory: %v", err)
@@ -72,7 +75,7 @@ func TestLoadConfigClientModeMapping(t *testing.T) {
 // TestLoadConfigFeatureWeaponConstraint tests MinFeatureWeapons > MaxFeatureWeapons constraint
 func TestLoadConfigFeatureWeaponConstraint(t *testing.T) {
 	tests := []struct {
-		name      string
+		name       string
 		minWeapons int
 		maxWeapons int
 		expected   int
@@ -107,7 +110,11 @@ func TestLoadConfigDefaultHost(t *testing.T) {
 	// When Host is empty, it should be set to the outbound IP
 	if cfg.Host == "" {
 		// Simulate the logic: if empty, set to outbound IP
-		cfg.Host = getOutboundIP4().To4().String()
+		ip, err := getOutboundIP4()
+		if err != nil {
+			t.Fatalf("getOutboundIP4() error: %v", err)
+		}
+		cfg.Host = ip.To4().String()
 		if cfg.Host == "" {
 			t.Error("Host should be set to outbound IP, got empty string")
 		}
@@ -135,25 +142,26 @@ func TestLoadConfigDefaultModeWhenInvalid(t *testing.T) {
 // TestConfigStruct tests Config structure creation with all fields
 func TestConfigStruct(t *testing.T) {
 	cfg := &Config{
-		Host:                   "localhost",
-		BinPath:                "/opt/erupe",
-		Language:               "en",
-		DisableSoftCrash:       false,
-		HideLoginNotice:        false,
-		LoginNotices:           []string{"Welcome"},
-		PatchServerManifest:    "http://patch.example.com/manifest",
-		PatchServerFile:        "http://patch.example.com/files",
-		DeleteOnSaveCorruption: false,
-		ClientMode:             "ZZ",
-		RealClientMode:         ZZ,
-		QuestCacheExpiry:       3600,
-		CommandPrefix:          "!",
-		AutoCreateAccount:      false,
-		LoopDelay:              100,
-		DefaultCourses:         []uint16{1, 2, 3},
-		EarthStatus:            0,
-		EarthID:                0,
-		EarthMonsters:          []int32{100, 101, 102},
+		Host:                      "localhost",
+		BinPath:                   "/opt/erupe",
+		Language:                  "en",
+		DisableShutdownCountdown:  false,
+		HideLoginNotice:           false,
+		LoginNotices:              []string{"Welcome"},
+		PatchServerManifest:       "http://patch.example.com/manifest",
+		PatchServerFile:           "http://patch.example.com/files",
+		DeleteOnSaveCorruption:    false,
+		DisableSaveIntegrityCheck: false,
+		ClientMode:                "ZZ",
+		RealClientMode:            ZZ,
+		QuestCacheExpiry:          3600,
+		CommandPrefix:             "!",
+		AutoCreateAccount:         false,
+		LoopDelay:                 100,
+		DefaultCourses:            []uint16{1, 2, 3},
+		EarthStatus:               0,
+		EarthID:                   0,
+		EarthMonsters:             []int32{100, 101, 102},
 		SaveDumps: SaveDumpOptions{
 			Enabled:    true,
 			RawEnabled: false,
@@ -202,9 +210,6 @@ func TestConfigNilSafety(t *testing.T) {
 	}
 
 	cfg = &Config{}
-	if cfg == nil {
-		t.Error("Config should be allocated")
-	}
 
 	cfg.Host = "test"
 	if cfg.Host != "test" {
@@ -274,12 +279,12 @@ func TestEntranceServerConfig(t *testing.T) {
 		Port:    10000,
 		Entries: []EntranceServerInfo{
 			{
-				IP:          "192.168.1.100",
-				Type:        1, // open
-				Season:      0, // green
-				Recommended: 1,
-				Name:        "Main Server",
-				Description: "Main hunting server",
+				IP:                 "192.168.1.100",
+				Type:               1, // open
+				Season:             0, // green
+				Recommended:        1,
+				Name:               "Main Server",
+				Description:        "Main hunting server",
 				AllowedClientFlags: 8192,
 				Channels: []EntranceChannelInfo{
 					{Port: 10001, MaxPlayers: 4, CurrentPlayers: 2},
@@ -489,10 +494,207 @@ func BenchmarkConfigCreation(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = &Config{
-			Host:     "localhost",
-			Language: "en",
-			ClientMode: "ZZ",
+			Host:           "localhost",
+			Language:       "en",
+			ClientMode:     "ZZ",
 			RealClientMode: ZZ,
 		}
+	}
+}
+
+// writeMinimalConfig writes a minimal config.json to dir and returns its path.
+func writeMinimalConfig(t *testing.T, dir, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0644); err != nil {
+		t.Fatalf("writing config.json: %v", err)
+	}
+}
+
+// TestMinimalConfigDefaults verifies that a minimal config.json produces a fully
+// populated Config with sane defaults (multipliers not zero, entrance entries present, etc).
+func TestMinimalConfigDefaults(t *testing.T) {
+	viper.Reset()
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	defer func() { _ = os.Chdir(origDir) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	writeMinimalConfig(t, dir, `{
+		"Database": { "Password": "test" }
+	}`)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error: %v", err)
+	}
+
+	// Multipliers must be 1.0 (not Go's zero value 0.0)
+	multipliers := map[string]float32{
+		"HRPMultiplier":       cfg.GameplayOptions.HRPMultiplier,
+		"SRPMultiplier":       cfg.GameplayOptions.SRPMultiplier,
+		"GRPMultiplier":       cfg.GameplayOptions.GRPMultiplier,
+		"ZennyMultiplier":     cfg.GameplayOptions.ZennyMultiplier,
+		"MaterialMultiplier":  cfg.GameplayOptions.MaterialMultiplier,
+		"GCPMultiplier":       cfg.GameplayOptions.GCPMultiplier,
+		"GMaterialMultiplier": cfg.GameplayOptions.GMaterialMultiplier,
+	}
+	for name, val := range multipliers {
+		if val != 1.0 {
+			t.Errorf("%s = %v, want 1.0", name, val)
+		}
+	}
+
+	// Entrance entries should be present
+	if len(cfg.Entrance.Entries) != 6 {
+		t.Errorf("Entrance.Entries = %d, want 6", len(cfg.Entrance.Entries))
+	}
+
+	// Commands should be present
+	if len(cfg.Commands) != 13 {
+		t.Errorf("Commands = %d, want 13", len(cfg.Commands))
+	}
+
+	// Courses should be present
+	if len(cfg.Courses) != 11 {
+		t.Errorf("Courses = %d, want 11", len(cfg.Courses))
+	}
+
+	// Event overrides must default to -1 (off); 0 is a debug sentinel
+	// meaning "force an inactive/empty schedule" in the diva/festa handlers.
+	if cfg.DebugOptions.DivaOverride != -1 {
+		t.Errorf("DebugOptions.DivaOverride = %d, want -1", cfg.DebugOptions.DivaOverride)
+	}
+	if cfg.DebugOptions.FestaOverride != -1 {
+		t.Errorf("DebugOptions.FestaOverride = %d, want -1", cfg.DebugOptions.FestaOverride)
+	}
+
+	// Standard ports
+	if cfg.Sign.Port != 53312 {
+		t.Errorf("Sign.Port = %d, want 53312", cfg.Sign.Port)
+	}
+	if cfg.API.Port != 8080 {
+		t.Errorf("API.Port = %d, want 8080", cfg.API.Port)
+	}
+	if cfg.Entrance.Port != 53310 {
+		t.Errorf("Entrance.Port = %d, want 53310", cfg.Entrance.Port)
+	}
+
+	// Servers enabled by default
+	if !cfg.Sign.Enabled {
+		t.Error("Sign.Enabled should be true")
+	}
+	if !cfg.API.Enabled {
+		t.Error("API.Enabled should be true")
+	}
+	if !cfg.Channel.Enabled {
+		t.Error("Channel.Enabled should be true")
+	}
+	if !cfg.Entrance.Enabled {
+		t.Error("Entrance.Enabled should be true")
+	}
+
+	// Database defaults
+	if cfg.Database.Host != "localhost" {
+		t.Errorf("Database.Host = %q, want localhost", cfg.Database.Host)
+	}
+	if cfg.Database.Port != 5432 {
+		t.Errorf("Database.Port = %d, want 5432", cfg.Database.Port)
+	}
+
+	// ClientMode defaults to ZZ
+	if cfg.RealClientMode != ZZ {
+		t.Errorf("RealClientMode = %v, want ZZ", cfg.RealClientMode)
+	}
+
+	// BinPath default
+	if cfg.BinPath != "bin" {
+		t.Errorf("BinPath = %q, want bin", cfg.BinPath)
+	}
+
+	// Gameplay limits
+	if cfg.GameplayOptions.MaximumNP != 100000 {
+		t.Errorf("MaximumNP = %d, want 100000", cfg.GameplayOptions.MaximumNP)
+	}
+}
+
+// TestFullConfigBackwardCompat verifies that existing full configs still load correctly.
+func TestFullConfigBackwardCompat(t *testing.T) {
+	viper.Reset()
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	defer func() { _ = os.Chdir(origDir) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read the reference config (the full original config.example.json).
+	// Look in the project root (one level up from config/).
+	refPath := filepath.Join(origDir, "..", "config.reference.json")
+	refData, err := os.ReadFile(refPath)
+	if err != nil {
+		t.Skipf("config.reference.json not found at %s, skipping backward compat test", refPath)
+	}
+	writeMinimalConfig(t, dir, string(refData))
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() with full config error: %v", err)
+	}
+
+	// Spot-check values from the reference config
+	if cfg.GameplayOptions.HRPMultiplier != 1.0 {
+		t.Errorf("HRPMultiplier = %v, want 1.0", cfg.GameplayOptions.HRPMultiplier)
+	}
+	if cfg.Sign.Port != 53312 {
+		t.Errorf("Sign.Port = %d, want 53312", cfg.Sign.Port)
+	}
+	if len(cfg.Entrance.Entries) != 6 {
+		t.Errorf("Entrance.Entries = %d, want 6", len(cfg.Entrance.Entries))
+	}
+	if len(cfg.Commands) != 13 {
+		t.Errorf("Commands = %d, want 13", len(cfg.Commands))
+	}
+	if cfg.GameplayOptions.MaximumNP != 100000 {
+		t.Errorf("MaximumNP = %d, want 100000", cfg.GameplayOptions.MaximumNP)
+	}
+}
+
+// TestSingleFieldOverride verifies that overriding one field in a dot-notation
+// section doesn't clobber other fields' defaults.
+func TestSingleFieldOverride(t *testing.T) {
+	viper.Reset()
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	defer func() { _ = os.Chdir(origDir) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	writeMinimalConfig(t, dir, `{
+		"Database": { "Password": "test" },
+		"GameplayOptions": { "HRPMultiplier": 2.0 }
+	}`)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error: %v", err)
+	}
+
+	// Overridden field
+	if cfg.GameplayOptions.HRPMultiplier != 2.0 {
+		t.Errorf("HRPMultiplier = %v, want 2.0", cfg.GameplayOptions.HRPMultiplier)
+	}
+
+	// Other multipliers should retain defaults
+	if cfg.GameplayOptions.SRPMultiplier != 1.0 {
+		t.Errorf("SRPMultiplier = %v, want 1.0 (should retain default)", cfg.GameplayOptions.SRPMultiplier)
+	}
+	if cfg.GameplayOptions.ZennyMultiplier != 1.0 {
+		t.Errorf("ZennyMultiplier = %v, want 1.0 (should retain default)", cfg.GameplayOptions.ZennyMultiplier)
+	}
+	if cfg.GameplayOptions.GCPMultiplier != 1.0 {
+		t.Errorf("GCPMultiplier = %v, want 1.0 (should retain default)", cfg.GameplayOptions.GCPMultiplier)
 	}
 }

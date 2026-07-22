@@ -3,14 +3,13 @@ package channelserver
 import (
 	"erupe-ce/common/byteframe"
 	"erupe-ce/network/mhfpacket"
-	"strings"
 )
 
 func handleMsgMhfRegisterEvent(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfRegisterEvent)
 	bf := byteframe.NewByteFrame()
 	// Some kind of check if there's already a session
-	if pkt.Unk1 && s.server.getRaviSemaphore() == nil {
+	if pkt.CheckOnly && s.server.getRaviSemaphore() == nil {
 		doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
 		return
 	}
@@ -19,6 +18,9 @@ func handleMsgMhfRegisterEvent(s *Session, p mhfpacket.MHFPacket) {
 	bf.WriteUint16(s.server.raviente.id)
 	doAckSimpleSucceed(s, pkt.AckHandle, bf.Data())
 }
+
+// ACK error codes from the MHF client
+const ackEFailed = uint8(0x41) // _ACK_EFAILED = 65
 
 func handleMsgMhfReleaseEvent(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfReleaseEvent)
@@ -44,11 +46,12 @@ func handleMsgMhfReleaseEvent(s *Session, p mhfpacket.MHFPacket) {
 	s.QueueSendMHF(&mhfpacket.MsgSysAck{
 		AckHandle:        pkt.AckHandle,
 		IsBufferResponse: false,
-		ErrorCode:        0x41,
+		ErrorCode:        ackEFailed,
 		AckData:          []byte{0x00, 0x00, 0x00, 0x00},
 	})
 }
 
+// RaviUpdate represents a Raviente register update entry.
 type RaviUpdate struct {
 	Op   uint8
 	Dest uint8
@@ -57,6 +60,11 @@ type RaviUpdate struct {
 
 func handleMsgSysOperateRegister(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysOperateRegister)
+
+	if len(pkt.RawDataPayload) == 0 {
+		doAckBufSucceed(s, pkt.AckHandle, nil)
+		return
+	}
 
 	var raviUpdates []RaviUpdate
 	var raviUpdate RaviUpdate
@@ -99,11 +107,11 @@ func handleMsgSysLoadRegister(s *Session, p mhfpacket.MHFPacket) {
 	bf.WriteUint8(pkt.Values)
 	for i := uint8(0); i < pkt.Values; i++ {
 		switch pkt.RegisterID {
-		case 0x40000:
+		case raviRegisterState:
 			bf.WriteUint32(s.server.raviente.state[i])
-		case 0x50000:
+		case raviRegisterSupport:
 			bf.WriteUint32(s.server.raviente.support[i])
-		case 0x60000:
+		case raviRegisterGeneral:
 			bf.WriteUint32(s.server.raviente.register[i])
 		}
 	}
@@ -117,15 +125,15 @@ func (s *Session) notifyRavi() {
 	}
 	var temp mhfpacket.MHFPacket
 	raviNotif := byteframe.NewByteFrame()
-	temp = &mhfpacket.MsgSysNotifyRegister{RegisterID: 0x40000}
+	temp = &mhfpacket.MsgSysNotifyRegister{RegisterID: raviRegisterState}
 	raviNotif.WriteUint16(uint16(temp.Opcode()))
-	temp.Build(raviNotif, s.clientContext)
-	temp = &mhfpacket.MsgSysNotifyRegister{RegisterID: 0x50000}
+	_ = temp.Build(raviNotif, s.clientContext)
+	temp = &mhfpacket.MsgSysNotifyRegister{RegisterID: raviRegisterSupport}
 	raviNotif.WriteUint16(uint16(temp.Opcode()))
-	temp.Build(raviNotif, s.clientContext)
-	temp = &mhfpacket.MsgSysNotifyRegister{RegisterID: 0x60000}
+	_ = temp.Build(raviNotif, s.clientContext)
+	temp = &mhfpacket.MsgSysNotifyRegister{RegisterID: raviRegisterGeneral}
 	raviNotif.WriteUint16(uint16(temp.Opcode()))
-	temp.Build(raviNotif, s.clientContext)
+	_ = temp.Build(raviNotif, s.clientContext)
 	raviNotif.WriteUint16(0x0010) // End it.
 	if s.server.erupeConfig.GameplayOptions.LowLatencyRaviente {
 		for session := range sema.clients {
@@ -140,13 +148,4 @@ func (s *Session) notifyRavi() {
 	}
 }
 
-func (s *Server) getRaviSemaphore() *Semaphore {
-	for _, semaphore := range s.semaphore {
-		if strings.HasPrefix(semaphore.name, "hs_l0") && strings.HasSuffix(semaphore.name, "3") {
-			return semaphore
-		}
-	}
-	return nil
-}
-
-func handleMsgSysNotifyRegister(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgSysNotifyRegister(s *Session, p mhfpacket.MHFPacket) {} // stub: unimplemented

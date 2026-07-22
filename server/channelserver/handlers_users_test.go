@@ -50,12 +50,11 @@ func TestHandleMsgSysNotifyUserBinary(t *testing.T) {
 
 func TestHandleMsgSysGetUserBinary_FromCache(t *testing.T) {
 	server := createMockServer()
-	server.userBinaryParts = make(map[userBinaryPartID][]byte)
+	server.userBinary = NewUserBinaryStore()
 	session := createMockSession(1, server)
 
 	// Pre-populate cache
-	key := userBinaryPartID{charID: 100, index: 1}
-	server.userBinaryParts[key] = []byte{0x01, 0x02, 0x03, 0x04}
+	server.userBinary.Set(100, 1, []byte{0x01, 0x02, 0x03, 0x04})
 
 	pkt := &mhfpacket.MsgSysGetUserBinary{
 		AckHandle:  12345,
@@ -78,26 +77,26 @@ func TestHandleMsgSysGetUserBinary_FromCache(t *testing.T) {
 
 func TestHandleMsgSysGetUserBinary_NotInCache(t *testing.T) {
 	server := createMockServer()
-	server.userBinaryParts = make(map[userBinaryPartID][]byte)
+	server.userBinary = NewUserBinaryStore()
 	session := createMockSession(1, server)
 
-	// Don't populate cache - will fall back to DB (which is nil in test)
 	pkt := &mhfpacket.MsgSysGetUserBinary{
 		AckHandle:  12345,
 		CharID:     100,
 		BinaryType: 1,
 	}
 
-	// This will panic when trying to access nil db, which is expected
-	// in the test environment without database setup
-	defer func() {
-		if r := recover(); r != nil {
-			// Expected - no database in test
-			t.Log("Expected panic due to nil database in test")
-		}
-	}()
-
 	handleMsgSysGetUserBinary(session, pkt)
+
+	// Should return a fail ACK (no DB fallback, just cache miss)
+	select {
+	case p := <-session.sendPackets:
+		if len(p.data) == 0 {
+			t.Error("Response packet should have data")
+		}
+	default:
+		t.Error("No response packet queued")
+	}
 }
 
 func TestUserBinaryPartID_AsMapKey(t *testing.T) {

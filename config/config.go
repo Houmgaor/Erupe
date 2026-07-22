@@ -1,12 +1,9 @@
-package _config
+package config
 
 import (
 	"fmt"
-	"log"
 	"net"
-	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/viper"
 )
@@ -67,27 +64,31 @@ func (m Mode) String() string {
 
 // Config holds the global server-wide config.
 type Config struct {
-	Host                   string `mapstructure:"Host"`
-	BinPath                string `mapstructure:"BinPath"`
-	Language               string
-	DisableSoftCrash       bool     // Disables the 'Press Return to exit' dialog allowing scripts to reboot the server automatically
-	HideLoginNotice        bool     // Hide the Erupe notice on login
-	LoginNotices           []string // MHFML string of the login notices displayed
-	PatchServerManifest    string   // Manifest patch server override
-	PatchServerFile        string   // File patch server override
-	DeleteOnSaveCorruption bool     // Attempts to save corrupted data will flag the save for deletion
-	ClientMode             string
-	RealClientMode         Mode
-	QuestCacheExpiry       int    // Number of seconds to keep quest data cached
-	CommandPrefix          string // The prefix for commands
-	AutoCreateAccount      bool   // Automatically create accounts if they don't exist
-	LoopDelay              int    // Delay in milliseconds between each loop iteration
-	DefaultCourses         []uint16
-	EarthStatus            int32
-	EarthID                int32
-	EarthMonsters          []int32
-	SaveDumps              SaveDumpOptions
-	Screenshots            ScreenshotsOptions
+	Host                      string `mapstructure:"Host"`
+	BinPath                   string `mapstructure:"BinPath"`
+	Language                  string
+	DisableShutdownCountdown  bool     `mapstructure:"DisableShutdownCountdown"` // Skip the in-game shutdown countdown (lets scripts restart the server unattended). Previously named DisableSoftCrash — legacy key still accepted.
+	ShutdownCountdownSeconds  int      // Seconds to count down before shutting down (default 10; ignored when DisableShutdownCountdown is true)
+	ShutdownDrainSeconds      int      // Additional seconds to wait for sessions to disconnect naturally before force-closing (default 30)
+	HideLoginNotice           bool     // Hide the Erupe notice on login
+	LoginNotices              []string // MHFML string of the login notices displayed
+	PatchServerManifest       string   // Manifest patch server override
+	PatchServerFile           string   // File patch server override
+	DeleteOnSaveCorruption    bool     // Attempts to save corrupted data will flag the save for deletion
+	DisableSaveIntegrityCheck bool     // Skip SHA-256 hash verification on load (needed for cross-server save transfers)
+	ClientMode                string
+	RealClientMode            Mode
+	QuestCacheExpiry          int    // Number of seconds to keep quest data cached
+	CommandPrefix             string // The prefix for commands
+	AutoCreateAccount         bool   // Automatically create accounts if they don't exist
+	LoopDelay                 int    // Delay in milliseconds between each loop iteration
+	DefaultCourses            []uint16
+	EarthStatus               int32
+	EarthID                   int32
+	EarthMonsters             []int32
+	SaveDumps                 SaveDumpOptions
+	Screenshots               ScreenshotsOptions
+	Capture                   CaptureOptions
 
 	DebugOptions    DebugOptions
 	GameplayOptions GameplayOptions
@@ -113,6 +114,16 @@ type ScreenshotsOptions struct {
 	Port          uint32 // Port for screenshots API
 	OutputDir     string
 	UploadQuality int //Determines the upload quality to the server
+}
+
+// CaptureOptions controls protocol packet capture recording.
+type CaptureOptions struct {
+	Enabled         bool     // Enable packet capture
+	OutputDir       string   // Directory for .mhfr capture files
+	ExcludeOpcodes  []uint16 // Opcodes to exclude from capture (e.g., ping, nop, position)
+	CaptureSign     bool     // Capture sign server sessions
+	CaptureEntrance bool     // Capture entrance server sessions
+	CaptureChannel  bool     // Capture channel server sessions
 }
 
 // DebugOptions holds various debug/temporary options for use while developing Erupe.
@@ -246,6 +257,14 @@ type API struct {
 	Banners     []APISignBanner
 	Messages    []APISignMessage
 	Links       []APISignLink
+	LandingPage LandingPage
+}
+
+// LandingPage holds config for the browser-facing landing page at /.
+type LandingPage struct {
+	Enabled bool   // Toggle the landing page on/off
+	Title   string // Page title (e.g. "My Frontier Server")
+	Content string // Body content — supports raw HTML
 }
 
 type APISignBanner struct {
@@ -297,51 +316,221 @@ type EntranceChannelInfo struct {
 	Port           uint16
 	MaxPlayers     uint16
 	CurrentPlayers uint16
+	Enabled        *bool // nil defaults to true for backward compatibility
 }
 
-var ErupeConfig *Config
-
-func init() {
-	var err error
-	ErupeConfig, err = LoadConfig()
-	if err != nil {
-		// In test environments or when config.toml is missing, use defaults
-		ErupeConfig = &Config{
-			ClientMode:   "ZZ",
-			RealClientMode: ZZ,
-		}
-		// Only call preventClose if it's not a test environment
-		if !isTestEnvironment() {
-			preventClose(fmt.Sprintf("Failed to load config: %s", err.Error()))
-		}
+// IsEnabled returns whether this channel is enabled. Defaults to true if Enabled is nil.
+func (c *EntranceChannelInfo) IsEnabled() bool {
+	if c.Enabled == nil {
+		return true
 	}
-}
-
-func isTestEnvironment() bool {
-	// Check if we're running under test
-	for _, arg := range os.Args {
-		if arg == "-test.v" || arg == "-test.run" || arg == "-test.timeout" {
-			return true
-		}
-		if strings.Contains(arg, "test") {
-			return true
-		}
-	}
-	return false
+	return *c.Enabled
 }
 
 // getOutboundIP4 gets the preferred outbound ip4 of this machine
 // From https://stackoverflow.com/a/37382208
-func getOutboundIP4() net.IP {
+func getOutboundIP4() (net.IP, error) {
 	conn, err := net.Dial("udp4", "8.8.8.8:80")
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("detecting outbound IP: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
 
-	return localAddr.IP.To4()
+	return localAddr.IP.To4(), nil
+}
+
+// registerDefaults sets all sane defaults via Viper so that a minimal
+// config.json (just database credentials) produces a fully working server.
+func registerDefaults() {
+	// Top-level settings
+	viper.SetDefault("Language", "jp")
+	viper.SetDefault("BinPath", "bin")
+	viper.SetDefault("HideLoginNotice", true)
+	viper.SetDefault("LoginNotices", []string{
+		"<BODY><CENTER><SIZE_3><C_4>Welcome to Erupe!",
+	})
+	viper.SetDefault("ClientMode", "ZZ")
+	viper.SetDefault("QuestCacheExpiry", 300)
+	viper.SetDefault("CommandPrefix", "!")
+	viper.SetDefault("AutoCreateAccount", true)
+	viper.SetDefault("LoopDelay", 50)
+	viper.SetDefault("ShutdownCountdownSeconds", 10)
+	viper.SetDefault("ShutdownDrainSeconds", 30)
+	// Back-compat: old configs use DisableSoftCrash. RegisterAlias makes Viper
+	// treat reads/writes of the old key as the new key, so existing
+	// config.json files keep working without modification.
+	viper.RegisterAlias("DisableSoftCrash", "DisableShutdownCountdown")
+	viper.SetDefault("DefaultCourses", []uint16{1, 23, 24})
+	viper.SetDefault("EarthMonsters", []int32{0, 0, 0, 0})
+
+	// SaveDumps
+	viper.SetDefault("SaveDumps", SaveDumpOptions{
+		Enabled:   true,
+		OutputDir: "save-backups",
+	})
+
+	// Screenshots
+	viper.SetDefault("Screenshots", ScreenshotsOptions{
+		Enabled:       true,
+		Host:          "127.0.0.1",
+		Port:          8080,
+		OutputDir:     "screenshots",
+		UploadQuality: 100,
+	})
+
+	// Capture
+	viper.SetDefault("Capture", CaptureOptions{
+		OutputDir:       "captures",
+		CaptureSign:     true,
+		CaptureEntrance: true,
+		CaptureChannel:  true,
+	})
+
+	// DebugOptions (dot-notation for per-field merge)
+	viper.SetDefault("DebugOptions.MaxHexdumpLength", 256)
+	viper.SetDefault("DebugOptions.DivaOverride", -1)
+	viper.SetDefault("DebugOptions.FestaOverride", -1)
+	viper.SetDefault("DebugOptions.AutoQuestBackport", true)
+	viper.SetDefault("DebugOptions.CapLink", CapLinkOptions{
+		Values: []uint16{51728, 20000, 51729, 1, 20000},
+		Port:   80,
+	})
+
+	// GameplayOptions (dot-notation — critical to avoid zeroing multipliers)
+	viper.SetDefault("GameplayOptions.MaxFeatureWeapons", 1)
+	viper.SetDefault("GameplayOptions.MaximumNP", 100000)
+	viper.SetDefault("GameplayOptions.MaximumRP", uint16(50000))
+	viper.SetDefault("GameplayOptions.MaximumFP", uint32(120000))
+	viper.SetDefault("GameplayOptions.TreasureHuntExpiry", uint32(604800))
+	viper.SetDefault("GameplayOptions.BoostTimeDuration", 7200)
+	viper.SetDefault("GameplayOptions.ClanMealDuration", 3600)
+	viper.SetDefault("GameplayOptions.ClanMemberLimits", [][]uint8{{0, 30}, {3, 40}, {7, 50}, {10, 60}})
+	viper.SetDefault("GameplayOptions.BonusQuestAllowance", uint32(3))
+	viper.SetDefault("GameplayOptions.DailyQuestAllowance", uint32(1))
+	viper.SetDefault("GameplayOptions.RegularRavienteMaxPlayers", uint8(8))
+	viper.SetDefault("GameplayOptions.ViolentRavienteMaxPlayers", uint8(8))
+	viper.SetDefault("GameplayOptions.BerserkRavienteMaxPlayers", uint8(32))
+	viper.SetDefault("GameplayOptions.ExtremeRavienteMaxPlayers", uint8(32))
+	viper.SetDefault("GameplayOptions.SmallBerserkRavienteMaxPlayers", uint8(8))
+	viper.SetDefault("GameplayOptions.GUrgentRate", float64(0.10))
+	// All reward multipliers default to 1.0 — without this, Go's zero value
+	// (0.0) would zero out all quest rewards for minimal configs.
+	for _, key := range []string{
+		"GCPMultiplier", "HRPMultiplier", "HRPMultiplierNC",
+		"SRPMultiplier", "SRPMultiplierNC", "GRPMultiplier", "GRPMultiplierNC",
+		"GSRPMultiplier", "GSRPMultiplierNC", "ZennyMultiplier", "ZennyMultiplierNC",
+		"GZennyMultiplier", "GZennyMultiplierNC", "MaterialMultiplier", "MaterialMultiplierNC",
+		"GMaterialMultiplier", "GMaterialMultiplierNC",
+	} {
+		viper.SetDefault("GameplayOptions."+key, float64(1.0))
+	}
+	viper.SetDefault("GameplayOptions.MezFesSoloTickets", uint32(5))
+	viper.SetDefault("GameplayOptions.MezFesGroupTickets", uint32(1))
+	viper.SetDefault("GameplayOptions.MezFesDuration", 172800)
+
+	// Discord
+	viper.SetDefault("Discord.RelayChannel.MaxMessageLength", 183)
+
+	// Commands (whole-struct default — replaced entirely if user provides any)
+	viper.SetDefault("Commands", []Command{
+		{Name: "Help", Enabled: true, Description: "Show enabled chat commands", Prefix: "help"},
+		{Name: "Rights", Enabled: false, Description: "Overwrite the Rights value on your account", Prefix: "rights"},
+		{Name: "Raviente", Enabled: true, Description: "Various Raviente siege commands", Prefix: "ravi"},
+		{Name: "Teleport", Enabled: false, Description: "Teleport to specified coordinates", Prefix: "tele"},
+		{Name: "Reload", Enabled: true, Description: "Reload all players in your Land", Prefix: "reload"},
+		{Name: "KeyQuest", Enabled: false, Description: "Overwrite your HR Key Quest progress", Prefix: "kqf"},
+		{Name: "Course", Enabled: true, Description: "Toggle Courses on your account", Prefix: "course"},
+		{Name: "PSN", Enabled: true, Description: "Link a PlayStation Network ID to your account", Prefix: "psn"},
+		{Name: "Discord", Enabled: true, Description: "Generate a token to link your Discord account", Prefix: "discord"},
+		{Name: "Ban", Enabled: false, Description: "Ban/Temp Ban a user", Prefix: "ban"},
+		{Name: "Timer", Enabled: true, Description: "Toggle the Quest timer", Prefix: "timer"},
+		{Name: "Playtime", Enabled: true, Description: "Show your playtime", Prefix: "playtime"},
+		{Name: "Language", Enabled: true, Description: "Show or change your preferred language (en|jp|fr|es|zh)", Prefix: "lang"},
+	})
+
+	// Courses
+	viper.SetDefault("Courses", []Course{
+		{Name: "HunterLife", Enabled: true},
+		{Name: "Extra", Enabled: true},
+		{Name: "Premium", Enabled: true},
+		{Name: "Assist", Enabled: false},
+		{Name: "N", Enabled: false},
+		{Name: "Hiden", Enabled: false},
+		{Name: "HunterSupport", Enabled: false},
+		{Name: "NBoost", Enabled: false},
+		{Name: "NetCafe", Enabled: true},
+		{Name: "HLRenewing", Enabled: true},
+		{Name: "EXRenewing", Enabled: true},
+	})
+
+	// Database (Password deliberately has no default)
+	viper.SetDefault("Database.Host", "localhost")
+	viper.SetDefault("Database.Port", 5432)
+	viper.SetDefault("Database.User", "postgres")
+	viper.SetDefault("Database.Database", "erupe")
+
+	// Sign server
+	viper.SetDefault("Sign.Enabled", true)
+	viper.SetDefault("Sign.Port", 53312)
+
+	// API server
+	viper.SetDefault("API.Enabled", true)
+	viper.SetDefault("API.Port", 8080)
+	viper.SetDefault("API.LandingPage", LandingPage{
+		Enabled: true,
+		Title:   "My Frontier Server",
+		Content: "<p>Welcome! Server is running.</p>",
+	})
+
+	// Channel server
+	viper.SetDefault("Channel.Enabled", true)
+
+	// Entrance server
+	viper.SetDefault("Entrance.Enabled", true)
+	viper.SetDefault("Entrance.Port", uint16(53310))
+	boolTrue := true
+	viper.SetDefault("Entrance.Entries", []EntranceServerInfo{
+		{
+			Name: "Newbie", Type: 3, Recommended: 2,
+			Channels: []EntranceChannelInfo{
+				{Port: 54001, MaxPlayers: 100, Enabled: &boolTrue},
+				{Port: 54002, MaxPlayers: 100, Enabled: &boolTrue},
+			},
+		},
+		{
+			Name: "Normal", Type: 1,
+			Channels: []EntranceChannelInfo{
+				{Port: 54003, MaxPlayers: 100, Enabled: &boolTrue},
+				{Port: 54004, MaxPlayers: 100, Enabled: &boolTrue},
+			},
+		},
+		{
+			Name: "Cities", Type: 2,
+			Channels: []EntranceChannelInfo{
+				{Port: 54005, MaxPlayers: 100, Enabled: &boolTrue},
+			},
+		},
+		{
+			Name: "Tavern", Type: 4,
+			Channels: []EntranceChannelInfo{
+				{Port: 54006, MaxPlayers: 100, Enabled: &boolTrue},
+			},
+		},
+		{
+			Name: "Return", Type: 5,
+			Channels: []EntranceChannelInfo{
+				{Port: 54007, MaxPlayers: 100, Enabled: &boolTrue},
+			},
+		},
+		{
+			Name: "MezFes", Type: 6, Recommended: 6,
+			Channels: []EntranceChannelInfo{
+				{Port: 54008, MaxPlayers: 100, Enabled: &boolTrue},
+			},
+		},
+	})
 }
 
 // LoadConfig loads the given config toml file.
@@ -349,10 +538,7 @@ func LoadConfig() (*Config, error) {
 	viper.SetConfigName("config")
 	viper.AddConfigPath(".")
 
-	viper.SetDefault("DevModeOptions.SaveDumps", SaveDumpOptions{
-		Enabled:   true,
-		OutputDir: "save-backups",
-	})
+	registerDefaults()
 
 	err := viper.ReadInConfig()
 	if err != nil {
@@ -366,7 +552,11 @@ func LoadConfig() (*Config, error) {
 	}
 
 	if c.Host == "" {
-		c.Host = getOutboundIP4().To4().String()
+		ip, err := getOutboundIP4()
+		if err != nil {
+			return nil, fmt.Errorf("failed to detect host IP: %w", err)
+		}
+		c.Host = ip.To4().String()
 	}
 
 	for i := range versionStrings {
@@ -388,21 +578,4 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return c, nil
-}
-
-func preventClose(text string) {
-	if ErupeConfig != nil && ErupeConfig.DisableSoftCrash {
-		os.Exit(0)
-	}
-	fmt.Println("\nFailed to start Erupe:\n" + text)
-	go wait()
-	fmt.Println("\nPress Enter/Return to exit...")
-	fmt.Scanln()
-	os.Exit(0)
-}
-
-func wait() {
-	for {
-		time.Sleep(time.Millisecond * 100)
-	}
 }

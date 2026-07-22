@@ -3,11 +3,12 @@ package network
 import (
 	"encoding/hex"
 	"errors"
-	_config "erupe-ce/config"
+	cfg "erupe-ce/config"
 	"erupe-ce/network/crypto"
-	"fmt"
 	"io"
 	"net"
+
+	"go.uber.org/zap"
 )
 
 // Conn defines the interface for a packet-based connection.
@@ -23,7 +24,9 @@ type Conn interface {
 // CryptConn represents a MHF encrypted two-way connection,
 // it automatically handles encryption, decryption, and key rotation via it's methods.
 type CryptConn struct {
+	logger                      *zap.Logger
 	conn                        net.Conn
+	realClientMode              cfg.Mode
 	readKeyRot                  uint32
 	sendKeyRot                  uint32
 	sentPackets                 int32
@@ -32,11 +35,16 @@ type CryptConn struct {
 }
 
 // NewCryptConn creates a new CryptConn with proper default values.
-func NewCryptConn(conn net.Conn) *CryptConn {
+func NewCryptConn(conn net.Conn, mode cfg.Mode, logger *zap.Logger) *CryptConn {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	cc := &CryptConn{
-		conn:       conn,
-		readKeyRot: 995117,
-		sendKeyRot: 995117,
+		logger:         logger,
+		conn:           conn,
+		realClientMode: mode,
+		readKeyRot:     995117,
+		sendKeyRot:     995117,
 	}
 	return cc
 }
@@ -61,7 +69,7 @@ func (cc *CryptConn) ReadPacket() ([]byte, error) {
 	var encryptedPacketBody []byte
 
 	// Don't know when support for this was added, works in Forward.4, doesn't work in Season 6.0
-	if _config.ErupeConfig.RealClientMode < _config.F1 {
+	if cc.realClientMode < cfg.F1 {
 		encryptedPacketBody = make([]byte, cph.DataSize)
 	} else {
 		encryptedPacketBody = make([]byte, uint32(cph.DataSize)+(uint32(cph.Pf0-0x03)*0x1000))
@@ -78,18 +86,19 @@ func (cc *CryptConn) ReadPacket() ([]byte, error) {
 
 	out, combinedCheck, check0, check1, check2 := crypto.Crypto(encryptedPacketBody, cc.readKeyRot, false, nil)
 	if cph.Check0 != check0 || cph.Check1 != check1 || cph.Check2 != check2 {
-		fmt.Printf("got c0 %X, c1 %X, c2 %X\n", check0, check1, check2)
-		fmt.Printf("want c0 %X, c1 %X, c2 %X\n", cph.Check0, cph.Check1, cph.Check2)
-		fmt.Printf("headerData:\n%s\n", hex.Dump(headerData))
-		fmt.Printf("encryptedPacketBody:\n%s\n", hex.Dump(encryptedPacketBody))
+		cc.logger.Warn("Crypto checksum mismatch",
+			zap.String("got", hex.EncodeToString([]byte{byte(check0 >> 8), byte(check0), byte(check1 >> 8), byte(check1), byte(check2 >> 8), byte(check2)})),
+			zap.String("want", hex.EncodeToString([]byte{byte(cph.Check0 >> 8), byte(cph.Check0), byte(cph.Check1 >> 8), byte(cph.Check1), byte(cph.Check2 >> 8), byte(cph.Check2)})),
+			zap.String("headerData", hex.Dump(headerData)),
+			zap.String("encryptedPacketBody", hex.Dump(encryptedPacketBody)),
+		)
 
 		// Attempt to bruteforce it.
-		fmt.Println("Crypto out of sync? Attempting bruteforce")
+		cc.logger.Warn("Crypto out of sync, attempting bruteforce")
 		for key := byte(0); key < 255; key++ {
 			out, combinedCheck, check0, check1, check2 = crypto.Crypto(encryptedPacketBody, 0, false, &key)
-			//fmt.Printf("Key: 0x%X\n%s\n", key, hex.Dump(out))
 			if cph.Check0 == check0 && cph.Check1 == check1 && cph.Check2 == check2 {
-				fmt.Printf("Bruceforce successful, override key: 0x%X\n", key)
+				cc.logger.Info("Bruteforce successful", zap.Uint8("overrideKey", key))
 
 				// Try to fix key for subsequent packets?
 				//cc.readKeyRot = (uint32(key) << 1) + 999983
@@ -132,7 +141,10 @@ func (cc *CryptConn) SendPacket(data []byte) error {
 		return err
 	}
 
-	cc.conn.Write(append(headerBytes, encData...))
+	_, err = cc.conn.Write(append(headerBytes, encData...))
+	if err != nil {
+		return err
+	}
 	cc.sentPackets++
 	cc.prevSendPacketCombinedCheck = combinedCheck
 

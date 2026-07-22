@@ -4,10 +4,10 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"erupe-ce/common/mhfcourse"
-	_config "erupe-ce/config"
 	"fmt"
 	"io"
 	"net"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +17,7 @@ import (
 	"erupe-ce/network"
 	"erupe-ce/network/clientctx"
 	"erupe-ce/network/mhfpacket"
+	"erupe-ce/network/pcap"
 
 	"go.uber.org/zap"
 )
@@ -46,6 +47,10 @@ type Session struct {
 	stagePass        string // Temporary storage
 	prevGuildID      uint32 // Stores the last GuildID used in InfoGuild
 	charID           uint32
+	userID           uint32
+	clientLang       string // Per-session language preference; empty = use server default
+	cachedI18n       *i18n  // Lazily populated by I18n(); invalidated on SetLang
+	cachedI18nLang   string // Lang the cachedI18n was built for
 	logKey           []byte
 	sessionStart     int64
 	courses          []mhfcourse.Course
@@ -70,29 +75,97 @@ type Session struct {
 	// Contains the mail list that maps accumulated indexes to mail IDs
 	mailList []int
 
-	// For Debuging
-	Name     string
-	closed   atomic.Bool
-	ackStart map[uint32]time.Time
+	// currentBeadIndex is the bead slot selected by the player via MsgMhfSetKiju.
+	// A value of -1 means no bead is currently assigned this session.
+	currentBeadIndex int
+
+	Name           string
+	closed         atomic.Bool
+	hidden         atomic.Bool // Set via MsgSysHideClient; excludes this session from MsgSysEnumerateClient's "All" results.
+	ackStart       map[uint32]time.Time
+	captureConn    *pcap.RecordingConn // non-nil when capture is active
+	captureCleanup func()              // Called on session close to flush/close capture file
 }
 
 // NewSession creates a new Session type.
 func NewSession(server *Server, conn net.Conn) *Session {
+	var cryptConn network.Conn = network.NewCryptConn(conn, server.erupeConfig.RealClientMode, server.logger.Named(conn.RemoteAddr().String()))
+
+	cryptConn, captureConn, captureCleanup := startCapture(server, cryptConn, conn.RemoteAddr(), pcap.ServerTypeChannel)
+
 	s := &Session{
-		logger:         server.logger.Named(conn.RemoteAddr().String()),
-		server:         server,
-		rawConn:        conn,
-		cryptConn:      network.NewCryptConn(conn),
-		sendPackets:    make(chan packet, 20),
-		clientContext:  &clientctx.ClientContext{}, // Unused
-		lastPacket:     time.Now(),
-		objectID:       server.getObjectId(),
-		sessionStart:   TimeAdjusted().Unix(),
-		stageMoveStack: stringstack.New(),
-		ackStart:       make(map[uint32]time.Time),
-		semaphoreID:    make([]uint16, 2),
+		logger:           server.logger.Named(conn.RemoteAddr().String()),
+		server:           server,
+		rawConn:          conn,
+		cryptConn:        cryptConn,
+		sendPackets:      make(chan packet, 20),
+		clientContext:    &clientctx.ClientContext{RealClientMode: server.erupeConfig.RealClientMode},
+		lastPacket:       time.Now(),
+		objectID:         server.getObjectId(),
+		sessionStart:     TimeAdjusted().Unix(),
+		stageMoveStack:   stringstack.New(),
+		ackStart:         make(map[uint32]time.Time),
+		semaphoreID:      make([]uint16, 2),
+		captureConn:      captureConn,
+		captureCleanup:   captureCleanup,
+		currentBeadIndex: -1,
 	}
 	return s
+}
+
+// Lang returns the session's effective language code, falling back to the
+// server's globally configured language when no per-user preference has been
+// loaded. Callers should use this instead of reading erupeConfig.Language
+// directly so that later phases can route localized content per session.
+func (s *Session) Lang() string {
+	s.Lock()
+	lang := s.clientLang
+	s.Unlock()
+	if lang != "" {
+		return lang
+	}
+	return s.server.erupeConfig.Language
+}
+
+// SetLang updates the session's in-memory language preference. Persistence
+// to the database is the caller's responsibility (via userRepo.SetLanguage).
+// The cached i18n table is invalidated so the next I18n() call rebuilds
+// against the new language.
+func (s *Session) SetLang(lang string) {
+	s.Lock()
+	s.clientLang = lang
+	s.cachedI18n = nil
+	s.cachedI18nLang = ""
+	s.Unlock()
+}
+
+// I18n returns the i18n string table resolved against this session's
+// effective language (see Lang). The first call materializes the table via
+// getLangStringsFor and the result is cached on the session so hot-path
+// handlers (chat, mail, timer tick broadcasts) do not pay the allocation on
+// every packet. SetLang invalidates the cache.
+func (s *Session) I18n() *i18n {
+	s.Lock()
+	if s.cachedI18n != nil && s.cachedI18nLang == s.clientLang {
+		i := s.cachedI18n
+		s.Unlock()
+		return i
+	}
+	lang := s.clientLang
+	s.Unlock()
+	// Resolve lang (falls back to server default when empty).
+	effectiveLang := lang
+	if effectiveLang == "" {
+		effectiveLang = s.server.erupeConfig.Language
+	}
+	resolved := getLangStringsFor(effectiveLang)
+	s.Lock()
+	// Someone may have raced us — overwrite defensively, pointer value is
+	// still the one we just built so callers get a consistent view.
+	s.cachedI18n = &resolved
+	s.cachedI18nLang = lang
+	s.Unlock()
+	return &resolved
 }
 
 // Start starts the session packet send and recv loop(s).
@@ -131,7 +204,7 @@ func (s *Session) QueueSendMHF(pkt mhfpacket.MHFPacket) {
 	bf.WriteUint16(uint16(pkt.Opcode()))
 
 	// Build the packet onto the byteframe.
-	pkt.Build(bf, s.clientContext)
+	_ = pkt.Build(bf, s.clientContext)
 
 	// Queue it.
 	s.QueueSend(bf.Data())
@@ -144,7 +217,7 @@ func (s *Session) QueueSendMHFNonBlocking(pkt mhfpacket.MHFPacket) {
 	bf.WriteUint16(uint16(pkt.Opcode()))
 
 	// Build the packet onto the byteframe.
-	pkt.Build(bf, s.clientContext)
+	_ = pkt.Build(bf, s.clientContext)
 
 	// Queue it.
 	s.QueueSendNonBlocking(bf.Data())
@@ -172,7 +245,7 @@ func (s *Session) sendLoop() {
 				s.logger.Warn("Failed to send packet", zap.Error(err))
 			}
 		}
-		time.Sleep(time.Duration(_config.ErupeConfig.LoopDelay) * time.Millisecond)
+		time.Sleep(time.Duration(s.server.erupeConfig.LoopDelay) * time.Millisecond)
 	}
 }
 
@@ -215,7 +288,7 @@ func (s *Session) recvLoop() {
 			return
 		}
 		s.handlePacketGroup(pkt)
-		time.Sleep(time.Duration(_config.ErupeConfig.LoopDelay) * time.Millisecond)
+		time.Sleep(time.Duration(s.server.erupeConfig.LoopDelay) * time.Millisecond)
 	}
 }
 
@@ -225,15 +298,19 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 	opcodeUint16 := bf.ReadUint16()
 	if len(bf.Data()) >= 6 {
 		s.ackStart[bf.ReadUint32()] = time.Now()
-		bf.Seek(2, io.SeekStart)
+		_, _ = bf.Seek(2, io.SeekStart)
 	}
 	opcode := network.PacketID(opcodeUint16)
 
 	// This shouldn't be needed, but it's better to recover and let the connection die than to panic the server.
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Printf("[%s]", s.Name)
-			fmt.Println("Recovered from panic", r)
+			s.logger.Error("Recovered from panic",
+				zap.String("name", s.Name),
+				zap.Stringer("opcode", opcode),
+				zap.Any("panic", r),
+				zap.String("stack", string(debug.Stack())),
+			)
 		}
 	}()
 
@@ -246,17 +323,33 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 	// Get the packet parser and handler for this opcode.
 	mhfPkt := mhfpacket.FromOpcode(opcode)
 	if mhfPkt == nil {
-		fmt.Println("Got opcode which we don't know how to parse, can't parse anymore for this group")
+		s.logger.Warn("Got opcode which we don't know how to parse, can't parse anymore for this group")
 		return
 	}
 	// Parse the packet.
 	err := mhfPkt.Parse(bf, s.clientContext)
 	if err != nil {
-		fmt.Printf("\n!!! [%s] %s NOT IMPLEMENTED !!! \n\n\n", s.Name, opcode)
+		s.logger.Warn("Packet not implemented",
+			zap.String("name", s.Name),
+			zap.Stringer("opcode", opcode),
+		)
+		return
+	}
+	if bf.Err() != nil {
+		s.logger.Warn("Malformed packet (read overflow during parse)",
+			zap.String("name", s.Name),
+			zap.Stringer("opcode", opcode),
+			zap.Error(bf.Err()),
+		)
 		return
 	}
 	// Handle the packet.
-	handlerTable[opcode](s, mhfPkt)
+	handler, ok := s.server.handlerTable[opcode]
+	if !ok {
+		s.logger.Warn("No handler for opcode", zap.Stringer("opcode", opcode))
+		return
+	}
+	handler(s, mhfPkt)
 	// If there is more data on the stream that the .Parse method didn't read, then read another packet off it.
 	remainingData := bf.DataFromCurrent()
 	if len(remainingData) >= 2 {
@@ -264,22 +357,18 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 	}
 }
 
+var ignoredOpcodes = map[network.PacketID]struct{}{
+	network.MSG_SYS_END:              {},
+	network.MSG_SYS_PING:             {},
+	network.MSG_SYS_NOP:              {},
+	network.MSG_SYS_TIME:             {},
+	network.MSG_SYS_EXTEND_THRESHOLD: {},
+	network.MSG_SYS_POSITION_OBJECT:  {},
+}
+
 func ignored(opcode network.PacketID) bool {
-	ignoreList := []network.PacketID{
-		network.MSG_SYS_END,
-		network.MSG_SYS_PING,
-		network.MSG_SYS_NOP,
-		network.MSG_SYS_TIME,
-		network.MSG_SYS_EXTEND_THRESHOLD,
-		network.MSG_SYS_POSITION_OBJECT,
-		// network.MSG_MHF_SAVEDATA, // Temporarily enabled for debugging save issues
-	}
-	set := make(map[network.PacketID]struct{}, len(ignoreList))
-	for _, s := range ignoreList {
-		set[s] = struct{}{}
-	}
-	_, r := set[opcode]
-	return r
+	_, ok := ignoredOpcodes[opcode]
+	return ok
 }
 
 func (s *Session) logMessage(opcode uint16, data []byte, sender string, recipient string) {
@@ -297,21 +386,23 @@ func (s *Session) logMessage(opcode uint16, data []byte, sender string, recipien
 	if len(data) >= 6 {
 		ackHandle = binary.BigEndian.Uint32(data[2:6])
 	}
-	if t, ok := s.ackStart[ackHandle]; ok {
-		fmt.Printf("[%s] -> [%s] (%fs)\n", sender, recipient, float64(time.Now().UnixNano()-t.UnixNano())/1000000000)
-	} else {
-		fmt.Printf("[%s] -> [%s]\n", sender, recipient)
+	fields := []zap.Field{
+		zap.String("sender", sender),
+		zap.String("recipient", recipient),
+		zap.Uint16("opcode_dec", opcode),
+		zap.String("opcode_hex", fmt.Sprintf("0x%04X", opcode)),
+		zap.Stringer("opcode_name", opcodePID),
+		zap.Int("data_bytes", len(data)),
 	}
-	fmt.Printf("Opcode: (Dec: %d Hex: 0x%04X Name: %s) \n", opcode, opcode, opcodePID)
+	if t, ok := s.ackStart[ackHandle]; ok {
+		fields = append(fields, zap.Duration("ack_latency", time.Since(t)))
+	}
 	if s.server.erupeConfig.DebugOptions.LogMessageData {
 		if len(data) <= s.server.erupeConfig.DebugOptions.MaxHexdumpLength {
-			fmt.Printf("Data [%d bytes]:\n%s\n", len(data), hex.Dump(data))
-		} else {
-			fmt.Printf("Data [%d bytes]: (Too long!)\n\n", len(data))
+			fields = append(fields, zap.String("data", hex.Dump(data)))
 		}
-	} else {
-		fmt.Printf("\n")
 	}
+	s.logger.Debug("Packet", fields...)
 }
 
 func (s *Session) getObjectId() uint32 {
@@ -319,19 +410,25 @@ func (s *Session) getObjectId() uint32 {
 	return uint32(s.objectID)<<16 | uint32(s.objectIndex)
 }
 
+// Semaphore ID base values
+const (
+	semaphoreBaseDefault = uint32(0x000F0000)
+	semaphoreBaseAlt     = uint32(0x000E0000)
+)
+
+// GetSemaphoreID returns the semaphore ID held by the session, varying by semaphore mode.
 func (s *Session) GetSemaphoreID() uint32 {
 	if s.semaphoreMode {
-		return 0x000E0000 + uint32(s.semaphoreID[1])
+		return semaphoreBaseAlt + uint32(s.semaphoreID[1])
 	} else {
-		return 0x000F0000 + uint32(s.semaphoreID[0])
+		return semaphoreBaseDefault + uint32(s.semaphoreID[0])
 	}
 }
 
 func (s *Session) isOp() bool {
-	var op bool
-	err := s.server.db.QueryRow(`SELECT op FROM users u WHERE u.id=(SELECT c.user_id FROM characters c WHERE c.id=$1)`, s.charID).Scan(&op)
-	if err == nil && op {
-		return true
+	op, err := s.server.userRepo.IsOp(s.userID)
+	if err != nil {
+		return false
 	}
-	return false
+	return op
 }

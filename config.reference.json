@@ -1,0 +1,275 @@
+{
+  "Host": "127.0.0.1",
+  "BinPath": "bin",
+  "Language": "en",
+  "DisableShutdownCountdown": false,
+  "ShutdownCountdownSeconds": 10,
+  "ShutdownDrainSeconds": 30,
+  "HideLoginNotice": true,
+  "LoginNotices": [
+    "<BODY><CENTER><SIZE_3><C_4>Welcome to Erupe 9.4.1!<BR><BODY><LEFT><SIZE_2><C_5>Erupe is a community implementation for the Frontier server<C_7>, we are not liable for any<BR><BODY>issues caused by installing the software!<BR><BODY><BR><BODY><C_4>■Get help on Discord!<C_7><BR><BODY><BR><BODY><C_4>■Don't talk to softlocking NPCs!<C_7><BR><BODY><BR><BODY><C_4>■Find the code on Mezeporta/Erupe (GitHub)!<C_7><BR><BODY><BR><BODY>Thank you to all of the contributors,<BR><BODY><BR><BODY>this wouldn't exist without you.<BR><BODY><BR><BODY>Maintained with love by the Mogapedia and Mezeporta communities."
+  ],
+  "PatchServerManifest": "",
+  "PatchServerFile": "",
+  "Screenshots":{
+    "Enabled":true,
+    "Host":"127.0.0.1",
+    "Port":8080,
+    "OutputDir":"screenshots",
+    "UploadQuality":100
+  },
+  "DeleteOnSaveCorruption": false,
+  "DisableSaveIntegrityCheck": false,
+  "ClientMode": "ZZ",
+  "QuestCacheExpiry": 300,
+  "CommandPrefix": "!",
+  "AutoCreateAccount": true,
+  "LoopDelay": 50,
+  "DefaultCourses": [1, 23, 24],
+  "EarthStatus": 0,
+  "EarthID": 0,
+  "EarthMonsters": [0, 0, 0, 0],
+  "SaveDumps": {
+    "Enabled": true,
+    "RawEnabled": false,
+    "OutputDir": "save-backups"
+  },
+  "Capture": {
+    "Enabled": false,
+    "OutputDir": "captures",
+    "ExcludeOpcodes": [],
+    "CaptureSign": true,
+    "CaptureEntrance": true,
+    "CaptureChannel": true
+  },
+  "DebugOptions": {
+    "CleanDB": false,
+    "MaxLauncherHR": false,
+    "LogInboundMessages": false,
+    "LogOutboundMessages": false,
+    "LogMessageData": false,
+    "MaxHexdumpLength": 256,
+    "DivaOverride": -1,
+    "FestaOverride": -1,
+    "TournamentOverride": 0,
+    "DisableTokenCheck": false,
+    "QuestTools": false,
+    "AutoQuestBackport": true,
+    "ProxyPort": 0,
+    "CapLink": {
+      "Values": [51728, 20000, 51729, 1, 20000],
+      "Key": "",
+      "Host": "",
+      "Port": 80
+    }
+  },
+  "GameplayOptions": {
+    "MinFeatureWeapons": 0,
+    "MaxFeatureWeapons": 1,
+    "MaximumNP": 100000,
+    "MaximumRP": 50000,
+    "MaximumFP": 120000,
+    "TreasureHuntExpiry": 604800,
+    "DisableLoginBoost": false,
+    "DisableBoostTime": false,
+    "BoostTimeDuration": 7200,
+    "ClanMealDuration": 3600,
+    "ClanMemberLimits": [[0, 30], [3, 40], [7, 50], [10, 60]],
+    "BonusQuestAllowance": 3,
+    "DailyQuestAllowance": 1,
+    "LowLatencyRaviente": false,
+    "RegularRavienteMaxPlayers": 8,
+    "ViolentRavienteMaxPlayers": 8,
+    "BerserkRavienteMaxPlayers": 32,
+    "ExtremeRavienteMaxPlayers": 32,
+    "SmallBerserkRavienteMaxPlayers": 8,
+    "GUrgentRate": 0.10,
+    "GCPMultiplier": 1.00,
+    "HRPMultiplier": 1.00,
+    "HRPMultiplierNC": 1.00,
+    "SRPMultiplier": 1.00,
+    "SRPMultiplierNC": 1.00,
+    "GRPMultiplier": 1.00,
+    "GRPMultiplierNC": 1.00,
+    "GSRPMultiplier": 1.00,
+    "GSRPMultiplierNC": 1.00,
+    "ZennyMultiplier": 1.00,
+    "ZennyMultiplierNC": 1.00,
+    "GZennyMultiplier": 1.00,
+    "GZennyMultiplierNC": 1.00,
+    "MaterialMultiplier": 1.00,
+    "MaterialMultiplierNC": 1.00,
+    "GMaterialMultiplier": 1.00,
+    "GMaterialMultiplierNC": 1.00,
+    "ExtraCarves": 0,
+    "ExtraCarvesNC": 0,
+    "GExtraCarves": 0,
+    "GExtraCarvesNC": 0,
+    "DisableHunterNavi": false,
+    "MezFesSoloTickets": 5,
+    "MezFesGroupTickets": 1,
+    "MezFesDuration": 172800,
+    "MezFesSwitchMinigame": false,
+    "EnableKaijiEvent": false,
+    "EnableHiganjimaEvent": false,
+    "EnableNierEvent": false,
+    "DisableRoad": false,
+    "SeasonOverride": false
+  },
+  "Discord": {
+    "Enabled": false,
+    "BotToken": "",
+    "RelayChannel": {
+      "Enabled": false,
+      "MaxMessageLength": 183,
+      "RelayChannelID": ""
+    }
+  },
+  "Commands": [
+    {
+      "Name": "Help",
+      "Enabled": true,
+      "Description": "Show enabled chat commands",
+      "Prefix": "help"
+    }, {
+      "Name": "Rights",
+      "Enabled": false,
+      "Description": "Overwrite the Rights value on your account",
+      "Prefix": "rights"
+    }, {
+      "Name": "Raviente",
+      "Enabled": true,
+      "Description": "Various Raviente siege commands",
+      "Prefix": "ravi"
+    }, {
+      "Name": "Teleport",
+      "Enabled": false,
+      "Description": "Teleport to specified coordinates",
+      "Prefix": "tele"
+    }, {
+      "Name": "Reload",
+      "Enabled": true,
+      "Description": "Reload all players in your Land",
+      "Prefix": "reload"
+    }, {
+      "Name": "KeyQuest",
+      "Enabled": false,
+      "Description": "Overwrite your HR Key Quest progress",
+      "Prefix": "kqf"
+    }, {
+      "Name": "Course",
+      "Enabled": true,
+      "Description": "Toggle Courses on your account",
+      "Prefix": "course"
+    }, {
+      "Name": "PSN",
+      "Enabled": true,
+      "Description": "Link a PlayStation Network ID to your account",
+      "Prefix": "psn"
+    }, {
+      "Name": "Discord",
+      "Enabled": true,
+      "Description": "Generate a token to link your Discord account",
+      "Prefix": "discord"
+    }, {
+      "Name": "Ban",
+      "Enabled": false,
+      "Description": "Ban/Temp Ban a user",
+      "Prefix": "ban"
+    }, {
+      "Name": "Timer",
+      "Enabled": true,
+      "Description": "Toggle the Quest timer",
+      "Prefix": "timer"
+    }, {
+      "Name": "Playtime",
+      "Enabled": true,
+      "Description": "Show your playtime",
+      "Prefix": "playtime"
+    }, {
+      "Name": "Language",
+      "Enabled": true,
+      "Description": "Show or change your preferred language (en|jp|fr|es|zh)",
+      "Prefix": "lang"
+    }
+  ],
+  "Courses": [
+    {"Name": "HunterLife", "Enabled": true},
+    {"Name": "Extra", "Enabled": true},
+    {"Name": "Premium", "Enabled": true},
+    {"Name": "Assist", "Enabled": false},
+    {"Name": "N", "Enabled": false},
+    {"Name": "Hiden", "Enabled": false},
+    {"Name": "HunterSupport", "Enabled": false},
+    {"Name": "NBoost", "Enabled": false},
+    {"Name": "NetCafe", "Enabled": true},
+    {"Name": "HLRenewing", "Enabled": true},
+    {"Name": "EXRenewing", "Enabled": true}
+  ],
+  "Database": {
+    "Host": "localhost",
+    "Port": 5432,
+    "User": "postgres",
+    "Password": "",
+    "Database": "erupe"
+  },
+  "Sign": {
+    "Enabled": true,
+    "Port": 53312
+  },
+  "API": {
+    "Enabled": true,
+    "Port": 8080,
+    "PatchServer": "",
+    "Banners": [],
+    "Messages": [],
+    "Links": [],
+    "LandingPage": {
+      "Enabled": true,
+      "Title": "My Frontier Server",
+      "Content": "<p>Welcome! Download the client from our <a href=\"https://discord.gg/example\">Discord</a>.</p>"
+    }
+  },
+  "Channel": {
+    "Enabled": true
+  },
+  "Entrance": {
+    "Enabled": true,
+    "Port": 53310,
+    "Entries": [
+      {
+        "Name": "Newbie", "Description": "", "IP": "", "Type": 3, "Recommended": 2, "AllowedClientFlags": 0,
+        "Channels": [
+          { "Port": 54001, "MaxPlayers": 100, "Enabled": true },
+          { "Port": 54002, "MaxPlayers": 100, "Enabled": true }
+        ]
+      }, {
+        "Name": "Normal", "Description": "", "IP": "", "Type": 1, "Recommended": 0, "AllowedClientFlags": 0,
+        "Channels": [
+          { "Port": 54003, "MaxPlayers": 100, "Enabled": true },
+          { "Port": 54004, "MaxPlayers": 100, "Enabled": true }
+        ]
+      }, {
+        "Name": "Cities", "Description": "", "IP": "", "Type": 2, "Recommended": 0, "AllowedClientFlags": 0,
+        "Channels": [
+          { "Port": 54005, "MaxPlayers": 100, "Enabled": true }
+        ]
+      }, {
+        "Name": "Tavern", "Description": "", "IP": "", "Type": 4, "Recommended": 0, "AllowedClientFlags": 0,
+        "Channels": [
+          { "Port": 54006, "MaxPlayers": 100, "Enabled": true }
+        ]
+      }, {
+        "Name": "Return", "Description": "", "IP": "", "Type": 5, "Recommended": 0, "AllowedClientFlags": 0,
+        "Channels": [
+          { "Port": 54007, "MaxPlayers": 100, "Enabled": true }
+        ]
+      }, {
+        "Name": "MezFes", "Description": "", "IP": "", "Type": 6, "Recommended": 6, "AllowedClientFlags": 0,
+        "Channels": [
+          { "Port": 54008, "MaxPlayers": 100, "Enabled": true }
+        ]
+      }
+    ]
+  }
+}

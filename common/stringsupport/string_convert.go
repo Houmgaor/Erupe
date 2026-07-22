@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -11,6 +12,8 @@ import (
 	"golang.org/x/text/transform"
 )
 
+// UTF8ToSJIS encodes a UTF-8 string to Shift-JIS bytes, silently dropping any
+// runes that cannot be represented in Shift-JIS.
 func UTF8ToSJIS(x string) []byte {
 	e := japanese.ShiftJIS.NewEncoder()
 	xt, _, err := transform.String(e, x)
@@ -28,15 +31,28 @@ func UTF8ToSJIS(x string) []byte {
 	return []byte(xt)
 }
 
-func SJISToUTF8(b []byte) string {
+// SJISToUTF8 decodes Shift-JIS bytes to a UTF-8 string.
+func SJISToUTF8(b []byte) (string, error) {
 	d := japanese.ShiftJIS.NewDecoder()
 	result, err := io.ReadAll(transform.NewReader(bytes.NewReader(b), d))
 	if err != nil {
-		panic(err)
+		return "", fmt.Errorf("ShiftJIS decode: %w", err)
 	}
-	return string(result)
+	return string(result), nil
 }
 
+// SJISToUTF8Lossy decodes Shift-JIS bytes to a UTF-8 string, logging
+// any decoding error at debug level instead of returning it.
+func SJISToUTF8Lossy(b []byte) string {
+	s, err := SJISToUTF8(b)
+	if err != nil {
+		slog.Debug("SJIS decode failed", "error", err, "raw_len", len(b))
+	}
+	return s
+}
+
+// ToNGWord converts a UTF-8 string into a slice of uint16 values in the
+// Shift-JIS byte-swapped format used by the MHF NG-word (chat filter) system.
 func ToNGWord(x string) []uint16 {
 	var w []uint16
 	for _, r := range x {
@@ -55,6 +71,8 @@ func ToNGWord(x string) []uint16 {
 	return w
 }
 
+// PaddedString returns a fixed-width null-terminated byte slice of the given
+// size. If t is true the string is first encoded to Shift-JIS.
 func PaddedString(x string, size uint, t bool) []byte {
 	if t {
 		e := japanese.ShiftJIS.NewEncoder()
@@ -70,6 +88,7 @@ func PaddedString(x string, size uint, t bool) []byte {
 	return out
 }
 
+// CSVAdd appends v to the comma-separated integer list if not already present.
 func CSVAdd(csv string, v int) string {
 	if len(csv) == 0 {
 		return strconv.Itoa(v)
@@ -81,6 +100,7 @@ func CSVAdd(csv string, v int) string {
 	}
 }
 
+// CSVRemove removes v from the comma-separated integer list.
 func CSVRemove(csv string, v int) string {
 	s := strings.Split(csv, ",")
 	for i, e := range s {
@@ -92,6 +112,7 @@ func CSVRemove(csv string, v int) string {
 	return strings.Join(s, ",")
 }
 
+// CSVContains reports whether v is present in the comma-separated integer list.
 func CSVContains(csv string, v int) bool {
 	s := strings.Split(csv, ",")
 	for i := 0; i < len(s); i++ {
@@ -103,6 +124,7 @@ func CSVContains(csv string, v int) bool {
 	return false
 }
 
+// CSVLength returns the number of elements in the comma-separated list.
 func CSVLength(csv string) int {
 	if csv == "" {
 		return 0
@@ -111,6 +133,7 @@ func CSVLength(csv string) int {
 	return len(s)
 }
 
+// CSVElems parses the comma-separated integer list into an int slice.
 func CSVElems(csv string) []int {
 	var r []int
 	if csv == "" {
@@ -124,6 +147,8 @@ func CSVElems(csv string) []int {
 	return r
 }
 
+// CSVGetIndex returns the integer at position i in the comma-separated list,
+// or 0 if i is out of range.
 func CSVGetIndex(csv string, i int) int {
 	s := CSVElems(csv)
 	if i < len(s) {
@@ -132,6 +157,8 @@ func CSVGetIndex(csv string, i int) int {
 	return 0
 }
 
+// CSVSetIndex replaces the integer at position i in the comma-separated list
+// with v. If i is out of range the list is returned unchanged.
 func CSVSetIndex(csv string, i int, v int) string {
 	s := CSVElems(csv)
 	if i < len(s) {

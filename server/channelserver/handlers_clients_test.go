@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	_config "erupe-ce/config"
 	"erupe-ce/common/byteframe"
+	cfg "erupe-ce/config"
 	"erupe-ce/network/mhfpacket"
 	"go.uber.org/zap"
 )
@@ -13,12 +13,12 @@ import (
 // TestHandleMsgSysEnumerateClient tests client enumeration in stages
 func TestHandleMsgSysEnumerateClient(t *testing.T) {
 	tests := []struct {
-		name              string
-		stageID           string
-		getType           uint8
-		setupStage        func(*Server, string)
-		wantClientCount   int
-		wantFailure       bool
+		name            string
+		stageID         string
+		getType         uint8
+		setupStage      func(*Server, string)
+		wantClientCount int
+		wantFailure     bool
 	}{
 		{
 			name:    "enumerate_all_clients",
@@ -34,9 +34,7 @@ func TestHandleMsgSysEnumerateClient(t *testing.T) {
 				s2.charID = 200
 				stage.clients[s1] = 100
 				stage.clients[s2] = 200
-				server.stagesLock.Lock()
-				server.stages[stageID] = stage
-				server.stagesLock.Unlock()
+				server.stages.Store(stageID, stage)
 			},
 			wantClientCount: 2,
 			wantFailure:     false,
@@ -50,9 +48,7 @@ func TestHandleMsgSysEnumerateClient(t *testing.T) {
 				stage.reservedClientSlots[100] = false // Not ready
 				stage.reservedClientSlots[200] = true  // Ready
 				stage.reservedClientSlots[300] = false // Not ready
-				server.stagesLock.Lock()
-				server.stages[stageID] = stage
-				server.stagesLock.Unlock()
+				server.stages.Store(stageID, stage)
 			},
 			wantClientCount: 2, // Only not-ready clients
 			wantFailure:     false,
@@ -66,9 +62,7 @@ func TestHandleMsgSysEnumerateClient(t *testing.T) {
 				stage.reservedClientSlots[100] = false // Not ready
 				stage.reservedClientSlots[200] = true  // Ready
 				stage.reservedClientSlots[300] = true  // Ready
-				server.stagesLock.Lock()
-				server.stages[stageID] = stage
-				server.stagesLock.Unlock()
+				server.stages.Store(stageID, stage)
 			},
 			wantClientCount: 2, // Only ready clients
 			wantFailure:     false,
@@ -79,9 +73,7 @@ func TestHandleMsgSysEnumerateClient(t *testing.T) {
 			getType: 0,
 			setupStage: func(server *Server, stageID string) {
 				stage := NewStage(stageID)
-				server.stagesLock.Lock()
-				server.stages[stageID] = stage
-				server.stagesLock.Unlock()
+				server.stages.Store(stageID, stage)
 			},
 			wantClientCount: 0,
 			wantFailure:     false,
@@ -103,11 +95,6 @@ func TestHandleMsgSysEnumerateClient(t *testing.T) {
 			// Create test session (which creates a server with erupeConfig)
 			mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 			s := createTestSession(mock)
-
-			// Initialize stages map if needed
-			if s.server.stages == nil {
-				s.server.stages = make(map[string]*Stage)
-			}
 
 			// Setup stage
 			tt.setupStage(s.server, tt.stageID)
@@ -160,22 +147,18 @@ func TestHandleMsgMhfListMember_Integration(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		blockedCSV     string
 		wantBlockCount int
 	}{
 		{
 			name:           "no_blocked_users",
-			blockedCSV:     "",
 			wantBlockCount: 0,
 		},
 		{
 			name:           "single_blocked_user",
-			blockedCSV:     "2",
 			wantBlockCount: 1,
 		},
 		{
 			name:           "multiple_blocked_users",
-			blockedCSV:     "2,3,4",
 			wantBlockCount: 3,
 		},
 	}
@@ -187,17 +170,19 @@ func TestHandleMsgMhfListMember_Integration(t *testing.T) {
 			charName := fmt.Sprintf("Char%d", i)
 			charID := CreateTestCharacter(t, db, userID, charName)
 
-			// Create blocked characters
-			if tt.blockedCSV != "" {
-				// Create the blocked users
-				for i := 2; i <= 4; i++ {
-					blockedUserID := CreateTestUser(t, db, "blocked_user_"+tt.name+"_"+string(rune(i)))
-					CreateTestCharacter(t, db, blockedUserID, "BlockedChar_"+string(rune(i)))
+			// Create blocked characters and build CSV from their actual IDs
+			blockedCSV := ""
+			for j := 0; j < tt.wantBlockCount; j++ {
+				blockedUserID := CreateTestUser(t, db, fmt.Sprintf("blk_%s_%d", tt.name, j))
+				blockedCharID := CreateTestCharacter(t, db, blockedUserID, fmt.Sprintf("Blk%d_%d", i, j))
+				if blockedCSV != "" {
+					blockedCSV += ","
 				}
+				blockedCSV += fmt.Sprintf("%d", blockedCharID)
 			}
 
 			// Set blocked list
-			_, err := db.Exec("UPDATE characters SET blocked = $1 WHERE id = $2", tt.blockedCSV, charID)
+			_, err := db.Exec("UPDATE characters SET blocked = $1 WHERE id = $2", blockedCSV, charID)
 			if err != nil {
 				t.Fatalf("Failed to update blocked list: %v", err)
 			}
@@ -206,7 +191,7 @@ func TestHandleMsgMhfListMember_Integration(t *testing.T) {
 			mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 			s := createTestSession(mock)
 			s.charID = charID
-			s.server.db = db
+			SetTestDB(s.server, db)
 
 			pkt := &mhfpacket.MsgMhfListMember{
 				AckHandle: 5678,
@@ -313,7 +298,7 @@ func TestHandleMsgMhfOprMember_Integration(t *testing.T) {
 			mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 			s := createTestSession(mock)
 			s.charID = charID
-			s.server.db = db
+			SetTestDB(s.server, db)
 
 			pkt := &mhfpacket.MsgMhfOprMember{
 				AckHandle: 9999,
@@ -380,9 +365,46 @@ func TestHandleMsgSysHideClient(t *testing.T) {
 				Hide: tt.hide,
 			}
 
-			// Should not panic (handler is empty)
 			handleMsgSysHideClient(s, pkt)
+
+			if got := s.hidden.Load(); got != tt.hide {
+				t.Errorf("s.hidden = %v, want %v", got, tt.hide)
+			}
 		})
+	}
+}
+
+// TestHandleMsgSysEnumerateClient_HiddenExcluded verifies that a session
+// marked hidden via MsgSysHideClient is left out of the "All" enumeration
+// seen by other clients in the same stage.
+func TestHandleMsgSysEnumerateClient_HiddenExcluded(t *testing.T) {
+	mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
+	s := createTestSession(mock)
+
+	stage := NewStage("hidden_test_stage")
+	visible := createMockSession(100, s.server)
+	hidden := createMockSession(200, s.server)
+	hidden.hidden.Store(true)
+	stage.clients[visible] = 100
+	stage.clients[hidden] = 200
+	s.server.stages.Store("hidden_test_stage", stage)
+
+	pkt := &mhfpacket.MsgSysEnumerateClient{
+		AckHandle: 1234,
+		StageID:   "hidden_test_stage",
+		Get:       0,
+	}
+
+	handleMsgSysEnumerateClient(s, pkt)
+
+	ackPkt := <-s.sendPackets
+	bf := byteframe.NewByteFrameFromBytes(ackPkt.data[10:])
+	count := bf.ReadUint16()
+	if count != 1 {
+		t.Fatalf("client count = %d, want 1 (hidden session should be excluded)", count)
+	}
+	if got := bf.ReadUint32(); got != 100 {
+		t.Errorf("enumerated charID = %d, want 100 (the visible session)", got)
 	}
 }
 
@@ -391,9 +413,8 @@ func TestEnumerateClient_ConcurrentAccess(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	server := &Server{
 		logger: logger,
-		stages: make(map[string]*Stage),
-		erupeConfig: &_config.Config{
-			DebugOptions: _config.DebugOptions{
+		erupeConfig: &cfg.Config{
+			DebugOptions: cfg.DebugOptions{
 				LogOutboundMessages: false,
 			},
 		},
@@ -410,9 +431,7 @@ func TestEnumerateClient_ConcurrentAccess(t *testing.T) {
 		stage.clients[sess] = i * 100
 	}
 
-	server.stagesLock.Lock()
-	server.stages[stageID] = stage
-	server.stagesLock.Unlock()
+	server.stages.Store(stageID, stage)
 
 	// Run concurrent enumerations
 	done := make(chan bool, 5)
@@ -452,7 +471,7 @@ func TestListMember_EmptyDatabase_Integration(t *testing.T) {
 	mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 	s := createTestSession(mock)
 	s.charID = charID
-	s.server.db = db
+	SetTestDB(s.server, db)
 
 	pkt := &mhfpacket.MsgMhfListMember{
 		AckHandle: 4444,
@@ -494,7 +513,7 @@ func TestOprMember_EdgeCases_Integration(t *testing.T) {
 			initialList:   "1,2,3",
 			operation:     false, // add
 			targetCharIDs: []uint32{2},
-			wantList:      "1,2,3,2", // CSV helper adds duplicates
+			wantList:      "1,2,3", // CSV helper deduplicates
 		},
 		{
 			name:          "remove_nonexistent_from_list",
@@ -528,7 +547,7 @@ func TestOprMember_EdgeCases_Integration(t *testing.T) {
 			mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 			s := createTestSession(mock)
 			s.charID = charID
-			s.server.db = db
+			SetTestDB(s.server, db)
 
 			pkt := &mhfpacket.MsgMhfOprMember{
 				AckHandle: 7777,
@@ -559,12 +578,36 @@ func TestOprMember_EdgeCases_Integration(t *testing.T) {
 	}
 }
 
+// Tests consolidated from handlers_coverage3_test.go
+
+func TestEmptyHandlers_ClientsGo(t *testing.T) {
+	server := createMockServer()
+	session := createMockSession(1, server)
+
+	tests := []struct {
+		name string
+		fn   func()
+	}{
+		{"handleMsgMhfShutClient", func() { handleMsgMhfShutClient(session, nil) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("%s panicked: %v", tt.name, r)
+				}
+			}()
+			tt.fn()
+		})
+	}
+}
+
 // BenchmarkEnumerateClients benchmarks client enumeration
 func BenchmarkEnumerateClients(b *testing.B) {
 	logger, _ := zap.NewDevelopment()
 	server := &Server{
 		logger: logger,
-		stages: make(map[string]*Stage),
 	}
 
 	stageID := "bench_stage"
@@ -578,7 +621,7 @@ func BenchmarkEnumerateClients(b *testing.B) {
 		stage.clients[sess] = i
 	}
 
-	server.stages[stageID] = stage
+	server.stages.Store(stageID, stage)
 
 	mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 	s := createTestSession(mock)

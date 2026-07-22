@@ -1,7 +1,15 @@
 package channelserver
 
+// Bead holds the display strings for a single kiju prayer bead type.
+type Bead struct {
+	ID          int
+	Name        string
+	Description string
+}
+
 type i18n struct {
 	language string
+	beads    []Bead
 	cafe     struct {
 		reset string
 	}
@@ -52,6 +60,12 @@ type i18n struct {
 			enabled  string
 			disabled string
 		}
+		lang struct {
+			usage   string
+			invalid string
+			success string
+			current string
+		}
 		ravi struct {
 			noCommand string
 			start     struct {
@@ -79,7 +93,9 @@ type i18n struct {
 		berserkSmall   string
 	}
 	guild struct {
-		invite struct {
+		rookieGuildName string
+		returnGuildName string
+		invite          struct {
 			title   string
 			body    string
 			success struct {
@@ -102,140 +118,66 @@ type i18n struct {
 	}
 }
 
-func getLangStrings(s *Server) i18n {
-	var i i18n
-	switch s.erupeConfig.Language {
-	case "jp":
-		i.language = "日本語"
-		i.cafe.reset = "%d/%dにリセット"
-		i.timer = "タイマー：%02d'%02d\"%02d.%03d (%df)"
-
-		i.commands.noOp = "You don't have permission to use this command"
-		i.commands.disabled = "%sのコマンドは無効です"
-		i.commands.reload = "リロードします"
-		i.commands.kqf.get = "現在のキークエストフラグ：%x"
-		i.commands.kqf.set.error = "キークエコマンドエラー　例：%s set xxxxxxxxxxxxxxxx"
-		i.commands.kqf.set.success = "キークエストのフラグが更新されました。ワールド／ランドを移動してください"
-		i.commands.kqf.version = "This command is disabled prior to MHFG10"
-		i.commands.rights.error = "コース更新コマンドエラー　例：%s x"
-		i.commands.rights.success = "コース情報を更新しました：%d"
-		i.commands.course.error = "コース確認コマンドエラー　例：%s <name>"
-		i.commands.course.disabled = "%sコースは無効です"
-		i.commands.course.enabled = "%sコースは有効です"
-		i.commands.course.locked = "%sコースはロックされています"
-		i.commands.teleport.error = "テレポートコマンドエラー　構文：%s x y"
-		i.commands.teleport.success = "%d %dにテレポート"
-		i.commands.psn.error = "PSN連携コマンドエラー　例：%s <psn id>"
-		i.commands.psn.success = "PSN「%s」が連携されています"
-		i.commands.psn.exists = "PSNは既存のユーザに接続されています"
-
-		i.commands.discord.success = "あなたのDiscordトークン：%s"
-
-		i.commands.ban.noUser = "Could not find user"
-		i.commands.ban.success = "Successfully banned %s"
-		i.commands.ban.invalid = "Invalid Character ID"
-		i.commands.ban.error = "Error in command. Format: %s <id> [length]"
-		i.commands.ban.length = " until %s"
-
-		i.commands.ravi.noCommand = "ラヴィコマンドが指定されていません"
-		i.commands.ravi.start.success = "大討伐を開始します"
-		i.commands.ravi.start.error = "大討伐は既に開催されています"
-		i.commands.ravi.multiplier = "ラヴィダメージ倍率：ｘ%.2f"
-		i.commands.ravi.res.success = "復活支援を実行します"
-		i.commands.ravi.res.error = "復活支援は実行されませんでした"
-		i.commands.ravi.sed.success = "鎮静支援を実行します"
-		i.commands.ravi.request = "鎮静支援を要請します"
-		i.commands.ravi.error = "ラヴィコマンドが認識されません"
-		i.commands.ravi.noPlayers = "誰も大討伐に参加していません"
-		i.commands.ravi.version = "This command is disabled outside of MHFZZ"
-
-		i.raviente.berserk = "<大討伐：猛狂期>が開催されました！"
-		i.raviente.extreme = "<大討伐：猛狂期【極】>が開催されました！"
-		i.raviente.extremeLimited = "<大討伐：猛狂期【極】(制限付)>が開催されました！"
-		i.raviente.berserkSmall = "<大討伐：猛狂期(小数)>が開催されました！"
-
-		i.guild.invite.title = "猟団勧誘のご案内"
-		i.guild.invite.body = "猟団「%s」からの勧誘通知です。\n「勧誘に返答」より、返答を行ってください。"
-
-		i.guild.invite.success.title = "成功"
-		i.guild.invite.success.body = "あなたは「%s」に参加できました。"
-
-		i.guild.invite.accepted.title = "承諾されました"
-		i.guild.invite.accepted.body = "招待した狩人が「%s」への招待を承諾しました。"
-
-		i.guild.invite.rejected.title = "却下しました"
-		i.guild.invite.rejected.body = "あなたは「%s」への参加を却下しました。"
-
-		i.guild.invite.declined.title = "辞退しました"
-		i.guild.invite.declined.body = "招待した狩人が「%s」への招待を辞退しました。"
-	default:
-		i.language = "English"
-		i.cafe.reset = "Resets on %d/%d"
-		i.timer = "Time: %02d:%02d:%02d.%03d (%df)"
-
-		i.commands.noOp = "You don't have permission to use this command"
-		i.commands.disabled = "%s command is disabled"
-		i.commands.reload = "Reloading players..."
-		i.commands.playtime = "Playtime: %d hours %d minutes %d seconds"
-
-		i.commands.kqf.get = "KQF: %x"
-		i.commands.kqf.set.error = "Error in command. Format: %s set xxxxxxxxxxxxxxxx"
-		i.commands.kqf.set.success = "KQF set, please switch Land/World"
-		i.commands.kqf.version = "This command is disabled prior to MHFG10"
-		i.commands.rights.error = "Error in command. Format: %s x"
-		i.commands.rights.success = "Set rights integer: %d"
-		i.commands.course.error = "Error in command. Format: %s <name>"
-		i.commands.course.disabled = "%s Course disabled"
-		i.commands.course.enabled = "%s Course enabled"
-		i.commands.course.locked = "%s Course is locked"
-		i.commands.teleport.error = "Error in command. Format: %s x y"
-		i.commands.teleport.success = "Teleporting to %d %d"
-		i.commands.psn.error = "Error in command. Format: %s <psn id>"
-		i.commands.psn.success = "Connected PSN ID: %s"
-		i.commands.psn.exists = "PSN ID is connected to another account!"
-
-		i.commands.discord.success = "Your Discord token: %s"
-
-		i.commands.ban.noUser = "Could not find user"
-		i.commands.ban.success = "Successfully banned %s"
-		i.commands.ban.invalid = "Invalid Character ID"
-		i.commands.ban.error = "Error in command. Format: %s <id> [length]"
-		i.commands.ban.length = " until %s"
-
-		i.commands.timer.enabled = "Quest timer enabled"
-		i.commands.timer.disabled = "Quest timer disabled"
-
-		i.commands.ravi.noCommand = "No Raviente command specified!"
-		i.commands.ravi.start.success = "The Great Slaying will begin in a moment"
-		i.commands.ravi.start.error = "The Great Slaying has already begun!"
-		i.commands.ravi.multiplier = "Raviente multiplier is currently %.2fx"
-		i.commands.ravi.res.success = "Sending resurrection support!"
-		i.commands.ravi.res.error = "Resurrection support has not been requested!"
-		i.commands.ravi.sed.success = "Sending sedation support if requested!"
-		i.commands.ravi.request = "Requesting sedation support!"
-		i.commands.ravi.error = "Raviente command not recognised!"
-		i.commands.ravi.noPlayers = "No one has joined the Great Slaying!"
-		i.commands.ravi.version = "This command is disabled outside of MHFZZ"
-
-		i.raviente.berserk = "<Great Slaying: Berserk> is being held!"
-		i.raviente.extreme = "<Great Slaying: Extreme> is being held!"
-		i.raviente.extremeLimited = "<Great Slaying: Extreme (Limited)> is being held!"
-		i.raviente.berserkSmall = "<Great Slaying: Berserk (Small)> is being held!"
-
-		i.guild.invite.title = "Invitation!"
-		i.guild.invite.body = "You have been invited to join\n「%s」\nDo you want to accept?"
-
-		i.guild.invite.success.title = "Success!"
-		i.guild.invite.success.body = "You have successfully joined\n「%s」."
-
-		i.guild.invite.accepted.title = "Accepted"
-		i.guild.invite.accepted.body = "The recipient accepted your invitation to join\n「%s」."
-
-		i.guild.invite.rejected.title = "Rejected"
-		i.guild.invite.rejected.body = "You rejected the invitation to join\n「%s」."
-
-		i.guild.invite.declined.title = "Declined"
-		i.guild.invite.declined.body = "The recipient declined your invitation to join\n「%s」."
+// beadName returns the localised name for a bead type.
+func (i *i18n) beadName(beadType int) string {
+	for _, b := range i.beads {
+		if b.ID == beadType {
+			return b.Name
+		}
 	}
-	return i
+	return ""
+}
+
+// beadDescription returns the localised description for a bead type.
+func (i *i18n) beadDescription(beadType int) string {
+	for _, b := range i.beads {
+		if b.ID == beadType {
+			return b.Description
+		}
+	}
+	return ""
+}
+
+// supportedLangs lists the language codes the server can serve. Kept in one
+// place so the !lang command validator and future API handlers stay in sync
+// with getLangStringsFor.
+var supportedLangs = []string{"en", "jp", "fr", "es", "zh"}
+
+// isSupportedLang reports whether the given code is one the server can serve.
+func isSupportedLang(code string) bool {
+	for _, l := range supportedLangs {
+		if l == code {
+			return true
+		}
+	}
+	return false
+}
+
+// getLangStringsFor returns the i18n string table for the given language code,
+// falling back to English for unknown or empty codes. This is the primitive
+// callers should use when they have a concrete language (e.g. a per-session
+// preference from the database); callers that only want the server default
+// should use getLangStrings.
+func getLangStringsFor(lang string) i18n {
+	switch lang {
+	case "jp":
+		return langJapanese()
+	case "fr":
+		return langFrench()
+	case "es":
+		return langSpanish()
+	case "zh":
+		return langChinese()
+	case "en":
+		return langEnglish()
+	default:
+		return langEnglish()
+	}
+}
+
+// getLangStrings returns the i18n string table for the server's globally
+// configured language. Per-session localization should resolve the language
+// first and call getLangStringsFor directly.
+func getLangStrings(s *Server) i18n {
+	return getLangStringsFor(s.erupeConfig.Language)
 }

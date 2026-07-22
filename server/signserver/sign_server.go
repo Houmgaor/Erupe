@@ -6,7 +6,7 @@ import (
 	"net"
 	"sync"
 
-	"erupe-ce/config"
+	cfg "erupe-ce/config"
 	"erupe-ce/network"
 	"github.com/jmoiron/sqlx"
 	"go.uber.org/zap"
@@ -16,15 +16,17 @@ import (
 type Config struct {
 	Logger      *zap.Logger
 	DB          *sqlx.DB
-	ErupeConfig *_config.Config
+	ErupeConfig *cfg.Config
 }
 
 // Server is a MHF sign server.
 type Server struct {
 	sync.Mutex
 	logger         *zap.Logger
-	erupeConfig    *_config.Config
-	db             *sqlx.DB
+	erupeConfig    *cfg.Config
+	userRepo       SignUserRepo
+	charRepo       SignCharacterRepo
+	sessionRepo    SignSessionRepo
 	listener       net.Listener
 	isShuttingDown bool
 }
@@ -34,7 +36,11 @@ func NewServer(config *Config) *Server {
 	s := &Server{
 		logger:      config.Logger,
 		erupeConfig: config.ErupeConfig,
-		db:          config.DB,
+	}
+	if config.DB != nil {
+		s.userRepo = NewSignUserRepository(config.DB)
+		s.charRepo = NewSignCharacterRepository(config.DB)
+		s.sessionRepo = NewSignSessionRepository(config.DB)
 	}
 	return s
 }
@@ -61,7 +67,7 @@ func (s *Server) Shutdown() {
 	s.Unlock()
 
 	// This will cause the acceptor goroutine to error and exit gracefully.
-	s.listener.Close()
+	_ = s.listener.Close()
 }
 
 func (s *Server) acceptClients() {
@@ -76,7 +82,8 @@ func (s *Server) acceptClients() {
 			if shutdown {
 				break
 			} else {
-				panic(err)
+				s.logger.Warn("Error accepting client", zap.Error(err))
+				continue
 			}
 		}
 
@@ -86,7 +93,7 @@ func (s *Server) acceptClients() {
 
 func (s *Server) handleConnection(conn net.Conn) {
 	s.logger.Debug("New connection", zap.String("RemoteAddr", conn.RemoteAddr().String()))
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Client initalizes the connection with a one-time buffer of 8 NULL bytes.
 	nullInit := make([]byte, 8)
@@ -97,13 +104,21 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 
 	// Create a new session.
+	var cc network.Conn = network.NewCryptConn(conn, s.erupeConfig.RealClientMode, s.logger)
+	cc, captureCleanup := startSignCapture(s, cc, conn.RemoteAddr())
+
 	session := &Session{
-		logger:    s.logger,
-		server:    s,
-		rawConn:   conn,
-		cryptConn: network.NewCryptConn(conn),
+		logger:         s.logger,
+		server:         s,
+		rawConn:        conn,
+		cryptConn:      cc,
+		captureCleanup: captureCleanup,
 	}
 
 	// Do the session's work.
 	session.work()
+
+	if session.captureCleanup != nil {
+		session.captureCleanup()
+	}
 }

@@ -3,6 +3,7 @@ package byteframe
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"io"
 	"math"
 	"testing"
@@ -57,7 +58,7 @@ func TestByteFrame_WriteAndReadUint8(t *testing.T) {
 		bf.WriteUint8(v)
 	}
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	for i, expected := range values {
 		got := bf.ReadUint8()
 		if got != expected {
@@ -83,7 +84,7 @@ func TestByteFrame_WriteAndReadUint16(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := NewByteFrame()
 			bf.WriteUint16(tt.value)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			got := bf.ReadUint16()
 			if got != tt.value {
 				t.Errorf("ReadUint16() = %d, want %d", got, tt.value)
@@ -108,7 +109,7 @@ func TestByteFrame_WriteAndReadUint32(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := NewByteFrame()
 			bf.WriteUint32(tt.value)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			got := bf.ReadUint32()
 			if got != tt.value {
 				t.Errorf("ReadUint32() = %d, want %d", got, tt.value)
@@ -133,7 +134,7 @@ func TestByteFrame_WriteAndReadUint64(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := NewByteFrame()
 			bf.WriteUint64(tt.value)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			got := bf.ReadUint64()
 			if got != tt.value {
 				t.Errorf("ReadUint64() = %d, want %d", got, tt.value)
@@ -150,7 +151,7 @@ func TestByteFrame_WriteAndReadInt8(t *testing.T) {
 		bf.WriteInt8(v)
 	}
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	for i, expected := range values {
 		got := bf.ReadInt8()
 		if got != expected {
@@ -167,7 +168,7 @@ func TestByteFrame_WriteAndReadInt16(t *testing.T) {
 		bf.WriteInt16(v)
 	}
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	for i, expected := range values {
 		got := bf.ReadInt16()
 		if got != expected {
@@ -184,7 +185,7 @@ func TestByteFrame_WriteAndReadInt32(t *testing.T) {
 		bf.WriteInt32(v)
 	}
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	for i, expected := range values {
 		got := bf.ReadInt32()
 		if got != expected {
@@ -201,7 +202,7 @@ func TestByteFrame_WriteAndReadInt64(t *testing.T) {
 		bf.WriteInt64(v)
 	}
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	for i, expected := range values {
 		got := bf.ReadInt64()
 		if got != expected {
@@ -218,7 +219,7 @@ func TestByteFrame_WriteAndReadFloat32(t *testing.T) {
 		bf.WriteFloat32(v)
 	}
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	for i, expected := range values {
 		got := bf.ReadFloat32()
 		if got != expected {
@@ -235,7 +236,7 @@ func TestByteFrame_WriteAndReadFloat64(t *testing.T) {
 		bf.WriteFloat64(v)
 	}
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	for i, expected := range values {
 		got := bf.ReadFloat64()
 		if got != expected {
@@ -250,7 +251,7 @@ func TestByteFrame_WriteAndReadBool(t *testing.T) {
 	bf.WriteBool(false)
 	bf.WriteBool(true)
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	if got := bf.ReadBool(); got != true {
 		t.Errorf("ReadBool()[0] = %v, want true", got)
 	}
@@ -267,7 +268,7 @@ func TestByteFrame_WriteAndReadBytes(t *testing.T) {
 	input := []byte{0x01, 0x02, 0x03, 0x04, 0x05}
 	bf.WriteBytes(input)
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	got := bf.ReadBytes(uint(len(input)))
 	if !bytes.Equal(got, input) {
 		t.Errorf("ReadBytes() = %v, want %v", got, input)
@@ -279,7 +280,7 @@ func TestByteFrame_WriteAndReadNullTerminatedBytes(t *testing.T) {
 	input := []byte("Hello, World!")
 	bf.WriteNullTerminatedBytes(input)
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	got := bf.ReadNullTerminatedBytes()
 	if !bytes.Equal(got, input) {
 		t.Errorf("ReadNullTerminatedBytes() = %v, want %v", got, input)
@@ -291,7 +292,7 @@ func TestByteFrame_ReadNullTerminatedBytes_NoNull(t *testing.T) {
 	input := []byte("Hello")
 	bf.WriteBytes(input)
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	got := bf.ReadNullTerminatedBytes()
 	// When there's no null terminator, it should return empty slice
 	if len(got) != 0 {
@@ -344,7 +345,7 @@ func TestByteFrame_Seek(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Reset to known position for each test
-			bf.Seek(5, io.SeekStart)
+			_, _ = bf.Seek(5, io.SeekStart)
 
 			pos, err := bf.Seek(tt.offset, tt.whence)
 			if tt.wantErr {
@@ -380,7 +381,7 @@ func TestByteFrame_Data(t *testing.T) {
 func TestByteFrame_DataFromCurrent(t *testing.T) {
 	bf := NewByteFrame()
 	bf.WriteBytes([]byte{0x01, 0x02, 0x03, 0x04, 0x05})
-	bf.Seek(2, io.SeekStart)
+	_, _ = bf.Seek(2, io.SeekStart)
 
 	data := bf.DataFromCurrent()
 	expected := []byte{0x03, 0x04, 0x05}
@@ -420,7 +421,7 @@ func TestByteFrame_BufferGrowth(t *testing.T) {
 	}
 
 	// Verify all data is still accessible
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	for i := 0; i < 100; i++ {
 		got := bf.ReadUint32()
 		if got != uint32(i) {
@@ -430,18 +431,33 @@ func TestByteFrame_BufferGrowth(t *testing.T) {
 	}
 }
 
-func TestByteFrame_ReadPanic(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Reading beyond buffer should panic")
-		}
-	}()
-
+func TestByteFrame_ReadOverflowSetsError(t *testing.T) {
 	bf := NewByteFrame()
 	bf.WriteUint8(0x01)
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	bf.ReadUint8()
-	bf.ReadUint16() // Should panic - trying to read 2 bytes when only 1 was written
+
+	if bf.Err() != nil {
+		t.Fatal("Err() should be nil before overflow")
+	}
+
+	// Should set sticky error - trying to read 2 bytes when only 1 was written
+	got := bf.ReadUint16()
+	if got != 0 {
+		t.Errorf("ReadUint16() after overflow = %d, want 0", got)
+	}
+	if bf.Err() == nil {
+		t.Error("Err() should be non-nil after read overflow")
+	}
+	if !errors.Is(bf.Err(), ErrReadOverflow) {
+		t.Errorf("Err() = %v, want ErrReadOverflow", bf.Err())
+	}
+
+	// Subsequent reads should also return zero without changing the error
+	got32 := bf.ReadUint32()
+	if got32 != 0 {
+		t.Errorf("ReadUint32() after overflow = %d, want 0", got32)
+	}
 }
 
 func TestByteFrame_SequentialWrites(t *testing.T) {
@@ -452,9 +468,9 @@ func TestByteFrame_SequentialWrites(t *testing.T) {
 	bf.WriteUint64(0x08090A0B0C0D0E0F)
 
 	expected := []byte{
-		0x01,                               // uint8
-		0x02, 0x03,                         // uint16
-		0x04, 0x05, 0x06, 0x07,             // uint32
+		0x01,       // uint8
+		0x02, 0x03, // uint16
+		0x04, 0x05, 0x06, 0x07, // uint32
 		0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, // uint64
 	}
 
@@ -487,7 +503,7 @@ func BenchmarkByteFrame_ReadUint32(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		bf.Seek(0, io.SeekStart)
+		_, _ = bf.Seek(0, io.SeekStart)
 		bf.ReadUint32()
 	}
 }

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"erupe-ce/config"
+	cfg "erupe-ce/config"
 	"erupe-ce/network"
 	"github.com/jmoiron/sqlx"
 	"go.uber.org/zap"
@@ -18,8 +18,9 @@ import (
 type Server struct {
 	sync.Mutex
 	logger         *zap.Logger
-	erupeConfig    *_config.Config
-	db             *sqlx.DB
+	erupeConfig    *cfg.Config
+	serverRepo     EntranceServerRepo
+	sessionRepo    EntranceSessionRepo
 	listener       net.Listener
 	isShuttingDown bool
 }
@@ -28,7 +29,7 @@ type Server struct {
 type Config struct {
 	Logger      *zap.Logger
 	DB          *sqlx.DB
-	ErupeConfig *_config.Config
+	ErupeConfig *cfg.Config
 }
 
 // NewServer creates a new Server type.
@@ -36,7 +37,10 @@ func NewServer(config *Config) *Server {
 	s := &Server{
 		logger:      config.Logger,
 		erupeConfig: config.ErupeConfig,
-		db:          config.DB,
+	}
+	if config.DB != nil {
+		s.serverRepo = NewEntranceServerRepository(config.DB)
+		s.sessionRepo = NewEntranceSessionRepository(config.DB)
 	}
 	return s
 }
@@ -65,7 +69,7 @@ func (s *Server) Shutdown() {
 	s.Unlock()
 
 	// This will cause the acceptor goroutine to error and exit gracefully.
-	s.listener.Close()
+	_ = s.listener.Close()
 }
 
 // acceptClients handles accepting new clients in a loop.
@@ -91,7 +95,7 @@ func (s *Server) acceptClients() {
 }
 
 func (s *Server) handleEntranceServerConnection(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	// Client initalizes the connection with a one-time buffer of 8 NULL bytes.
 	nullInit := make([]byte, 8)
 	n, err := io.ReadFull(conn, nullInit)
@@ -104,7 +108,10 @@ func (s *Server) handleEntranceServerConnection(conn net.Conn) {
 	}
 
 	// Create a new encrypted connection handler and read a packet from it.
-	cc := network.NewCryptConn(conn)
+	var cc network.Conn = network.NewCryptConn(conn, s.erupeConfig.RealClientMode, s.logger)
+	cc, captureCleanup := startEntranceCapture(s, cc, conn.RemoteAddr())
+	defer captureCleanup()
+
 	pkt, err := cc.ReadPacket()
 	if err != nil {
 		s.logger.Warn("Error reading packet", zap.Error(err))
@@ -112,7 +119,7 @@ func (s *Server) handleEntranceServerConnection(conn net.Conn) {
 	}
 
 	if s.erupeConfig.DebugOptions.LogInboundMessages {
-		fmt.Printf("[Client] -> [Server]\nData [%d bytes]:\n%s\n", len(pkt), hex.Dump(pkt))
+		s.logger.Debug("Inbound packet", zap.Int("bytes", len(pkt)), zap.String("data", hex.Dump(pkt)))
 	}
 
 	local := strings.Split(conn.RemoteAddr().String(), ":")[0] == "127.0.0.1"
@@ -121,7 +128,7 @@ func (s *Server) handleEntranceServerConnection(conn net.Conn) {
 	if len(pkt) > 5 {
 		data = append(data, makeUsrResp(pkt, s)...)
 	}
-	cc.SendPacket(data)
+	_ = cc.SendPacket(data)
 	// Close because we only need to send the response once.
 	// Any further requests from the client will come from a new connection.
 }

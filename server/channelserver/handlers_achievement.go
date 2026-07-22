@@ -1,10 +1,18 @@
 package channelserver
 
 import (
+	"io"
+
 	"erupe-ce/common/byteframe"
 	"erupe-ce/network/mhfpacket"
-	"fmt"
-	"io"
+	"go.uber.org/zap"
+)
+
+// Achievement trophy tier thresholds (bitfield values)
+const (
+	AchievementTrophyBronze = uint8(0x40)
+	AchievementTrophySilver = uint8(0x60)
+	AchievementTrophyGold   = uint8(0x7F)
 )
 
 var achievementCurves = [][]int32{
@@ -30,6 +38,7 @@ var achievementCurveMap = map[uint8][]int32{
 	32: achievementCurves[3],
 }
 
+// Achievement represents computed achievement data for a character.
 type Achievement struct {
 	Level     uint8
 	Value     uint32
@@ -40,6 +49,7 @@ type Achievement struct {
 	Trophy    uint8
 }
 
+// GetAchData computes achievement level and progress from a raw score.
 func GetAchData(id uint8, score int32) Achievement {
 	curve := achievementCurveMap[id]
 	var ach Achievement
@@ -57,10 +67,10 @@ func GetAchData(id uint8, score int32) Achievement {
 				ach.NextValue = 15
 			case 6:
 				ach.NextValue = 15
-				ach.Trophy = 0x40
+				ach.Trophy = AchievementTrophyBronze
 			case 7:
 				ach.NextValue = 20
-				ach.Trophy = 0x60
+				ach.Trophy = AchievementTrophySilver
 			}
 			return ach
 		} else {
@@ -79,7 +89,7 @@ func GetAchData(id uint8, score int32) Achievement {
 		}
 	}
 	ach.Required = uint32(curve[7])
-	ach.Trophy = 0x7F
+	ach.Trophy = AchievementTrophyGold
 	ach.Progress = ach.Required
 	return ach
 }
@@ -87,40 +97,25 @@ func GetAchData(id uint8, score int32) Achievement {
 func handleMsgMhfGetAchievement(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetAchievement)
 
-	var exists int
-	err := s.server.db.QueryRow("SELECT id FROM achievements WHERE id=$1", pkt.CharID).Scan(&exists)
-	if err != nil {
-		s.server.db.Exec("INSERT INTO achievements (id) VALUES ($1)", pkt.CharID)
-	}
-
-	var scores [33]int32
-	err = s.server.db.QueryRow("SELECT * FROM achievements WHERE id=$1", pkt.CharID).Scan(&scores[0],
-		&scores[0], &scores[1], &scores[2], &scores[3], &scores[4], &scores[5], &scores[6], &scores[7], &scores[8],
-		&scores[9], &scores[10], &scores[11], &scores[12], &scores[13], &scores[14], &scores[15], &scores[16],
-		&scores[17], &scores[18], &scores[19], &scores[20], &scores[21], &scores[22], &scores[23], &scores[24],
-		&scores[25], &scores[26], &scores[27], &scores[28], &scores[29], &scores[30], &scores[31], &scores[32])
+	summary, err := s.server.achievementService.GetAll(pkt.CharID)
 	if err != nil {
 		doAckBufSucceed(s, pkt.AckHandle, make([]byte, 20))
 		return
 	}
 
 	resp := byteframe.NewByteFrame()
-	var points uint32
 	resp.WriteBytes(make([]byte, 16))
 	resp.WriteBytes([]byte{0x02, 0x00, 0x00}) // Unk
 
-	var id uint8
-	entries := uint8(33)
-	resp.WriteUint8(entries) // Entry count
-	for id = 0; id < entries; id++ {
-		achData := GetAchData(id, scores[id])
-		points += achData.Value
+	resp.WriteUint8(achievementEntryCount)
+	for id := uint8(0); id < achievementEntryCount; id++ {
+		ach := summary.Achievements[id]
 		resp.WriteUint8(id)
-		resp.WriteUint8(achData.Level)
-		resp.WriteUint16(achData.NextValue)
-		resp.WriteUint32(achData.Required)
-		resp.WriteBool(false) // TODO: Notify on rank increase since last checked, see MhfDisplayedAchievement
-		resp.WriteUint8(achData.Trophy)
+		resp.WriteUint8(ach.Level)
+		resp.WriteUint16(ach.NextValue)
+		resp.WriteUint32(ach.Required)
+		resp.WriteBool(summary.Notify[id])
+		resp.WriteUint8(ach.Trophy)
 		/* Trophy bitfield
 		0000 0000
 		abcd efgh
@@ -129,13 +124,13 @@ func handleMsgMhfGetAchievement(s *Session, p mhfpacket.MHFPacket) {
 		B-H - Gold (0x7F)
 		*/
 		resp.WriteUint16(0) // Unk
-		resp.WriteUint32(achData.Progress)
+		resp.WriteUint32(ach.Progress)
 	}
-	resp.Seek(0, io.SeekStart)
-	resp.WriteUint32(points)
-	resp.WriteUint32(points)
-	resp.WriteUint32(points)
-	resp.WriteUint32(points)
+	_, _ = resp.Seek(0, io.SeekStart)
+	resp.WriteUint32(summary.Points)
+	resp.WriteUint32(summary.Points)
+	resp.WriteUint32(summary.Points)
+	resp.WriteUint32(summary.Points)
 	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
@@ -144,26 +139,27 @@ func handleMsgMhfSetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {
 	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
-func handleMsgMhfResetAchievement(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfResetAchievement(s *Session, p mhfpacket.MHFPacket) {} // stub: unimplemented
 
 func handleMsgMhfAddAchievement(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfAddAchievement)
 
-	var exists int
-	err := s.server.db.QueryRow("SELECT id FROM achievements WHERE id=$1", s.charID).Scan(&exists)
-	if err != nil {
-		s.server.db.Exec("INSERT INTO achievements (id) VALUES ($1)", s.charID)
+	if err := s.server.achievementService.Increment(s.charID, pkt.AchievementID); err != nil {
+		s.logger.Warn("Failed to increment achievement", zap.Error(err))
 	}
-
-	s.server.db.Exec(fmt.Sprintf("UPDATE achievements SET ach%d=ach%d+1 WHERE id=$1", pkt.AchievementID, pkt.AchievementID), s.charID)
 }
 
-func handleMsgMhfPaymentAchievement(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfPaymentAchievement(s *Session, p mhfpacket.MHFPacket) {} // stub: unimplemented
 
 func handleMsgMhfDisplayedAchievement(s *Session, p mhfpacket.MHFPacket) {
-	// This is how you would figure out if the rank-up notification needs to occur
+	if s.server.achievementService == nil {
+		return
+	}
+	if err := s.server.achievementService.MarkDisplayed(s.charID); err != nil {
+		s.logger.Warn("Failed to mark achievements as displayed", zap.Error(err))
+	}
 }
 
-func handleMsgMhfGetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfGetCaAchievementHist(s *Session, p mhfpacket.MHFPacket) {} // stub: unimplemented
 
-func handleMsgMhfSetCaAchievement(s *Session, p mhfpacket.MHFPacket) {}
+func handleMsgMhfSetCaAchievement(s *Session, p mhfpacket.MHFPacket) {} // stub: unimplemented

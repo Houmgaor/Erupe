@@ -1,21 +1,29 @@
 package channelserver
 
 import (
-	"database/sql"
 	"encoding/binary"
+	"errors"
 	"erupe-ce/common/byteframe"
 	"erupe-ce/common/decryption"
 	ps "erupe-ce/common/pascalstring"
-	_config "erupe-ce/config"
+	cfg "erupe-ce/config"
 	"erupe-ce/network/mhfpacket"
 	"fmt"
 	"io"
+	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
 
 	"go.uber.org/zap"
 )
+
+// errFileNotFound distinguishes "no matching .bin/.json exists on disk" from
+// other I/O failures (permissions, a bad mount, etc.) in loadQuestBinary/
+// loadScenarioBinary, so callers can log an accurate "not found" message
+// instead of a generic "failed to open" for what is actually missing data.
+var errFileNotFound = errors.New("file not found")
 
 type tuneValue struct {
 	ID    uint16
@@ -48,8 +56,9 @@ func equal(a, b []byte) bool {
 	return true
 }
 
-func BackportQuest(data []byte) []byte {
-	wp := binary.LittleEndian.Uint32(data[0:4]) + 96
+// BackportQuest converts a quest binary to an older format.
+func BackportQuest(data []byte, mode cfg.Mode) []byte {
+	wp := binary.LittleEndian.Uint32(data[0:4]) + questRewardTableBase
 	rp := wp + 4
 	for i := uint32(0); i < 6; i++ {
 		if i != 0 {
@@ -59,17 +68,17 @@ func BackportQuest(data []byte) []byte {
 		copy(data[wp:wp+4], data[rp:rp+4])
 	}
 
-	fillLength := uint32(108)
-	if _config.ErupeConfig.RealClientMode <= _config.S6 {
-		fillLength = 44
-	} else if _config.ErupeConfig.RealClientMode <= _config.F5 {
-		fillLength = 52
-	} else if _config.ErupeConfig.RealClientMode <= _config.G101 {
-		fillLength = 76
+	fillLength := questBackportFillZZ
+	if mode <= cfg.S6 {
+		fillLength = questBackportFillS6
+	} else if mode <= cfg.F5 {
+		fillLength = questBackportFillF5
+	} else if mode <= cfg.G101 {
+		fillLength = questBackportFillG101
 	}
 
 	copy(data[wp:wp+fillLength], data[rp:rp+fillLength])
-	if _config.ErupeConfig.RealClientMode <= _config.G91 {
+	if mode <= cfg.G91 {
 		patterns := [][]byte{
 			{0x0A, 0x00, 0x01, 0x33, 0xD7, 0x00}, // 10% Armor Sphere -> Stone
 			{0x06, 0x00, 0x02, 0x33, 0xD8, 0x00}, // 6% Armor Sphere+ -> Iron Ore
@@ -86,7 +95,7 @@ func BackportQuest(data []byte) []byte {
 		}
 	}
 
-	if _config.ErupeConfig.RealClientMode <= _config.S6 {
+	if mode <= cfg.S6 {
 		binary.LittleEndian.PutUint32(data[16:20], binary.LittleEndian.Uint32(data[8:12]))
 	}
 	return data
@@ -106,10 +115,13 @@ func handleMsgSysGetFile(s *Session, p mhfpacket.MHFPacket) {
 			)
 		}
 		filename := fmt.Sprintf("%d_0_0_0_S%d_T%d_C%d", pkt.ScenarioIdentifer.CategoryID, pkt.ScenarioIdentifer.MainID, pkt.ScenarioIdentifer.Flags, pkt.ScenarioIdentifer.ChapterID)
-		// Read the scenario file.
-		data, err := os.ReadFile(filepath.Join(s.server.erupeConfig.BinPath, fmt.Sprintf("scenarios/%s.bin", filename)))
+		data, err := loadScenarioBinary(s, filename)
 		if err != nil {
-			s.logger.Error(fmt.Sprintf("Failed to open file: %s/scenarios/%s.bin", s.server.erupeConfig.BinPath, filename))
+			msg := "Failed to read scenario file"
+			if errors.Is(err, errFileNotFound) {
+				msg = "Scenario file not found"
+			}
+			s.logger.Error(msg, zap.String("binPath", s.server.erupeConfig.BinPath), zap.String("filename", filename), zap.Error(err))
 			doAckBufFail(s, pkt.AckHandle, nil)
 			return
 		}
@@ -126,22 +138,76 @@ func handleMsgSysGetFile(s *Session, p mhfpacket.MHFPacket) {
 			pkt.Filename = seasonConversion(s, pkt.Filename)
 		}
 
-		data, err := os.ReadFile(filepath.Join(s.server.erupeConfig.BinPath, fmt.Sprintf("quests/%s.bin", pkt.Filename)))
+		data, err := loadQuestBinary(s, pkt.Filename)
 		if err != nil {
-			s.logger.Error(fmt.Sprintf("Failed to open file: %s/quests/%s.bin", s.server.erupeConfig.BinPath, pkt.Filename))
+			msg := "Failed to read quest file"
+			if errors.Is(err, errFileNotFound) {
+				msg = "Quest file not found"
+			}
+			s.logger.Error(msg, zap.String("binPath", s.server.erupeConfig.BinPath), zap.String("filename", pkt.Filename), zap.Error(err))
 			doAckBufFail(s, pkt.AckHandle, nil)
 			return
 		}
-		if _config.ErupeConfig.RealClientMode <= _config.Z1 && s.server.erupeConfig.DebugOptions.AutoQuestBackport {
-			data = BackportQuest(decryption.UnpackSimple(data))
+		if s.server.erupeConfig.RealClientMode <= cfg.Z1 && s.server.erupeConfig.DebugOptions.AutoQuestBackport {
+			data = BackportQuest(decryption.UnpackSimple(data), s.server.erupeConfig.RealClientMode)
 		}
 		doAckBufSucceed(s, pkt.AckHandle, data)
 	}
 }
 
 func questFileExists(s *Session, filename string) bool {
-	_, err := os.Stat(filepath.Join(s.server.erupeConfig.BinPath, fmt.Sprintf("quests/%s.bin", filename)))
+	base := filepath.Join(s.server.erupeConfig.BinPath, "quests", filename)
+	if _, err := os.Stat(base + ".bin"); err == nil {
+		return true
+	}
+	_, err := os.Stat(base + ".json")
 	return err == nil
+}
+
+// loadQuestBinary loads a quest file by name, trying .bin first then .json.
+// For .json files it compiles the JSON to the MHF binary wire format.
+func loadQuestBinary(s *Session, filename string) ([]byte, error) {
+	base := filepath.Join(s.server.erupeConfig.BinPath, "quests", filename)
+
+	if data, err := os.ReadFile(base + ".bin"); err == nil {
+		return data, nil
+	}
+
+	jsonData, err := os.ReadFile(base + ".json")
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w: tried %s.bin and %s.json", errFileNotFound, base, base)
+		}
+		return nil, err
+	}
+	compiled, err := CompileQuestJSON(jsonData, s.Lang())
+	if err != nil {
+		return nil, fmt.Errorf("compile quest JSON %s: %w", filename, err)
+	}
+	return compiled, nil
+}
+
+// loadScenarioBinary loads a scenario file by name, trying .bin first then .json.
+// For .json files it compiles the JSON to the MHF binary wire format.
+func loadScenarioBinary(s *Session, filename string) ([]byte, error) {
+	base := filepath.Join(s.server.erupeConfig.BinPath, "scenarios", filename)
+
+	if data, err := os.ReadFile(base + ".bin"); err == nil {
+		return data, nil
+	}
+
+	jsonData, err := os.ReadFile(base + ".json")
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w: tried %s.bin and %s.json", errFileNotFound, base, base)
+		}
+		return nil, err
+	}
+	compiled, err := CompileScenarioJSON(jsonData, s.Lang())
+	if err != nil {
+		return nil, fmt.Errorf("compile scenario JSON %s: %w", filename, err)
+	}
+	return compiled, nil
 }
 
 func seasonConversion(s *Session, questFile string) string {
@@ -194,124 +260,146 @@ func seasonConversion(s *Session, questFile string) string {
 
 func handleMsgMhfLoadFavoriteQuest(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfLoadFavoriteQuest)
-	var data []byte
-	err := s.server.db.QueryRow("SELECT savefavoritequest FROM characters WHERE id = $1", s.charID).Scan(&data)
-	if err == nil && len(data) > 0 {
-		doAckBufSucceed(s, pkt.AckHandle, data)
-	} else {
-		doAckBufSucceed(s, pkt.AckHandle, []byte{0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
-	}
+	loadCharacterData(s, pkt.AckHandle, "savefavoritequest",
+		[]byte{0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 }
 
 func handleMsgMhfSaveFavoriteQuest(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSaveFavoriteQuest)
-	dumpSaveData(s, pkt.Data, "favquest")
-	s.server.db.Exec("UPDATE characters SET savefavoritequest=$1 WHERE id=$2", pkt.Data, s.charID)
-	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+	saveCharacterData(s, pkt.AckHandle, "savefavoritequest", pkt.Data, 65536)
 }
 
 func loadQuestFile(s *Session, questId int) []byte {
-	data, exists := s.server.questCacheData[questId]
-	if exists && s.server.questCacheTime[questId].Add(time.Duration(s.server.erupeConfig.QuestCacheExpiry)*time.Second).After(time.Now()) {
-		return data
+	lang := s.Lang()
+	if cached, ok := s.server.questCache.Get(questId, lang); ok {
+		return cached
 	}
 
-	file, err := os.ReadFile(filepath.Join(s.server.erupeConfig.BinPath, fmt.Sprintf("quests/%05dd0.bin", questId)))
-	if err != nil {
+	base := filepath.Join(s.server.erupeConfig.BinPath, fmt.Sprintf("quests/%05dd0", questId))
+	var decrypted []byte
+	if data, err := os.ReadFile(base + ".bin"); err == nil {
+		decrypted = decryption.UnpackSimple(data)
+	} else if jsonData, err := os.ReadFile(base + ".json"); err == nil {
+		compiled, err := CompileQuestJSON(jsonData, lang)
+		if err != nil {
+			s.logger.Error("loadQuestFile: failed to compile quest JSON",
+				zap.Int("questId", questId), zap.Error(err))
+			return nil
+		}
+		decrypted = compiled
+	} else {
 		return nil
 	}
 
-	decrypted := decryption.UnpackSimple(file)
-	if _config.ErupeConfig.RealClientMode <= _config.Z1 && s.server.erupeConfig.DebugOptions.AutoQuestBackport {
-		decrypted = BackportQuest(decrypted)
+	if s.server.erupeConfig.RealClientMode <= cfg.Z1 && s.server.erupeConfig.DebugOptions.AutoQuestBackport {
+		decrypted = BackportQuest(decrypted, s.server.erupeConfig.RealClientMode)
 	}
 	fileBytes := byteframe.NewByteFrameFromBytes(decrypted)
 	fileBytes.SetLE()
-	fileBytes.Seek(int64(fileBytes.ReadUint32()), 0)
+	_, _ = fileBytes.Seek(int64(fileBytes.ReadUint32()), 0)
 
-	bodyLength := 320
-	if _config.ErupeConfig.RealClientMode <= _config.S6 {
-		bodyLength = 160
-	} else if _config.ErupeConfig.RealClientMode <= _config.F5 {
-		bodyLength = 168
-	} else if _config.ErupeConfig.RealClientMode <= _config.G101 {
-		bodyLength = 192
-	} else if _config.ErupeConfig.RealClientMode <= _config.Z1 {
-		bodyLength = 224
+	bodyLength := questBodyLenZZ
+	if s.server.erupeConfig.RealClientMode <= cfg.S6 {
+		bodyLength = questBodyLenS6
+	} else if s.server.erupeConfig.RealClientMode <= cfg.F5 {
+		bodyLength = questBodyLenF5
+	} else if s.server.erupeConfig.RealClientMode <= cfg.G101 {
+		bodyLength = questBodyLenG101
+	} else if s.server.erupeConfig.RealClientMode <= cfg.Z1 {
+		bodyLength = questBodyLenZ1
 	}
 
 	// The n bytes directly following the data pointer must go directly into the event's body, after the header and before the string pointers.
 	questBody := byteframe.NewByteFrameFromBytes(fileBytes.ReadBytes(uint(bodyLength)))
 	questBody.SetLE()
 	// Find the master quest string pointer
-	questBody.Seek(40, 0)
-	fileBytes.Seek(int64(questBody.ReadUint32()), 0)
-	questBody.Seek(40, 0)
+	_, _ = questBody.Seek(questStringPointerOff, 0)
+	_, _ = fileBytes.Seek(int64(questBody.ReadUint32()), 0)
+	_, _ = questBody.Seek(questStringPointerOff, 0)
 	// Overwrite it
 	questBody.WriteUint32(uint32(bodyLength))
-	questBody.Seek(0, 2)
+	_, _ = questBody.Seek(0, 2)
 
 	// Rewrite the quest strings and their pointers
 	var tempString []byte
 	newStrings := byteframe.NewByteFrame()
-	tempPointer := bodyLength + 32
-	for i := 0; i < 8; i++ {
+	tempPointer := bodyLength + questStringTablePadding
+	for i := 0; i < questStringCount; i++ {
 		questBody.WriteUint32(uint32(tempPointer))
 		temp := int64(fileBytes.Index())
-		fileBytes.Seek(int64(fileBytes.ReadUint32()), 0)
+		_, _ = fileBytes.Seek(int64(fileBytes.ReadUint32()), 0)
 		tempString = fileBytes.ReadNullTerminatedBytes()
-		fileBytes.Seek(temp+4, 0)
+		_, _ = fileBytes.Seek(temp+4, 0)
 		tempPointer += len(tempString) + 1
 		newStrings.WriteNullTerminatedBytes(tempString)
 	}
 	questBody.WriteBytes(newStrings.Data())
 
-	s.server.questCacheLock.Lock()
-	s.server.questCacheData[questId] = questBody.Data()
-	s.server.questCacheTime[questId] = time.Now()
-	s.server.questCacheLock.Unlock()
-	return questBody.Data()
+	result := questBody.Data()
+	s.server.questCache.Put(questId, lang, result)
+	return result
 }
 
-func makeEventQuest(s *Session, rows *sql.Rows) ([]byte, error) {
-	var id, mark uint32
-	var questId, activeDuration, inactiveDuration, flags int
-	var maxPlayers, questType uint8
-	var startTime time.Time
-	rows.Scan(&id, &maxPlayers, &questType, &questId, &mark, &flags, &startTime, &activeDuration, &inactiveDuration)
-
-	data := loadQuestFile(s, questId)
+func makeEventQuest(s *Session, eq EventQuest) ([]byte, error) {
+	data := loadQuestFile(s, eq.QuestID)
 	if data == nil {
-		return nil, fmt.Errorf("failed to load quest file (%d)", questId)
+		return nil, fmt.Errorf("failed to load quest file (%d)", eq.QuestID)
 	}
 
 	bf := byteframe.NewByteFrame()
-	bf.WriteUint32(id)
+	bf.WriteUint32(eq.ID)
 	bf.WriteUint32(0) // Unk
 	bf.WriteUint8(0)  // Unk
-	switch questType {
-	case 16:
+	switch eq.QuestType {
+	case QuestTypeRegularRaviente:
 		bf.WriteUint8(s.server.erupeConfig.GameplayOptions.RegularRavienteMaxPlayers)
-	case 22:
+	case QuestTypeViolentRaviente:
 		bf.WriteUint8(s.server.erupeConfig.GameplayOptions.ViolentRavienteMaxPlayers)
-	case 40:
+	case QuestTypeBerserkRaviente:
 		bf.WriteUint8(s.server.erupeConfig.GameplayOptions.BerserkRavienteMaxPlayers)
-	case 50:
+	case QuestTypeExtremeRaviente:
 		bf.WriteUint8(s.server.erupeConfig.GameplayOptions.ExtremeRavienteMaxPlayers)
-	case 51:
+	case QuestTypeSmallBerserkRavi:
 		bf.WriteUint8(s.server.erupeConfig.GameplayOptions.SmallBerserkRavienteMaxPlayers)
 	default:
-		bf.WriteUint8(maxPlayers)
+		bf.WriteUint8(eq.MaxPlayers)
 	}
-	bf.WriteUint8(questType)
-	if questType == 9 {
-		bf.WriteBool(false)
+	bf.WriteUint8(eq.QuestType)
+	if eq.QuestType == QuestTypeSpecialTool {
+		var stamps, required int
+		var deadline time.Time
+		err := s.server.db.QueryRow(`SELECT COUNT(*) FROM campaign_state WHERE campaign_id = (
+			SELECT campaign_id
+			FROM campaign_rewards
+			WHERE item_type = 9
+			AND item_id = $1
+			LIMIT 1
+		) AND character_id = $2`, eq.QuestID, s.charID).Scan(&stamps)
+		if err != nil {
+			bf.WriteBool(false)
+		} else {
+			err = s.server.db.QueryRow(`SELECT stamps, end_time
+			FROM campaigns
+			WHERE id = (
+				SELECT campaign_id
+				FROM campaign_rewards
+				WHERE item_type = 9
+				AND item_id = $1
+				LIMIT 1
+			)`, eq.QuestID).Scan(&required, &deadline)
+			required = campaignRequiredStamps(required)
+			if err == nil && stamps >= required && deadline.After(time.Now()) {
+				bf.WriteBool(true)
+			} else {
+				bf.WriteBool(false)
+			}
+		}
 	} else {
 		bf.WriteBool(true)
 	}
 	bf.WriteUint16(0) // Unk
-	if _config.ErupeConfig.RealClientMode >= _config.G2 {
-		bf.WriteUint32(mark)
+	if s.server.erupeConfig.RealClientMode >= cfg.G2 {
+		bf.WriteUint32(eq.Mark)
 	}
 	bf.WriteUint16(0) // Unk
 	bf.WriteUint16(uint16(len(data)))
@@ -320,17 +408,17 @@ func makeEventQuest(s *Session, rows *sql.Rows) ([]byte, error) {
 	// Time Flag Replacement
 	// Bitset Structure: b8 UNK, b7 Required Objective, b6 UNK, b5 Night, b4 Day, b3 Cold, b2 Warm, b1 Spring
 	// if the byte is set to 0 the game choses the quest file corresponding to whatever season the game is on
-	bf.Seek(25, 0)
+	_, _ = bf.Seek(questFrameTimeFlagOffset, 0)
 	flagByte := bf.ReadUint8()
-	bf.Seek(25, 0)
+	_, _ = bf.Seek(questFrameTimeFlagOffset, 0)
 	if s.server.erupeConfig.GameplayOptions.SeasonOverride {
 		bf.WriteUint8(flagByte & 0b11100000)
 	} else {
 		// Allow for seasons to be specified in database, otherwise use the one in the file.
-		if flags < 0 {
+		if eq.Flags < 0 {
 			bf.WriteUint8(flagByte)
 		} else {
-			bf.WriteUint8(uint8(flags))
+			bf.WriteUint8(uint8(eq.Flags))
 		}
 	}
 
@@ -338,13 +426,19 @@ func makeEventQuest(s *Session, rows *sql.Rows) ([]byte, error) {
 	// Bitset Structure Quest Variant 2: b8 Road, b7 High Conquest, b6 Fixed Difficulty, b5 No Active Feature, b4 Timer, b3 No Cuff, b2 No Halk Pots, b1 Low Conquest
 	// Bitset Structure Quest Variant 3: b8 No Sigils, b7 UNK, b6 Interception, b5 Zenith, b4 No GP Skills, b3 No Simple Mode?, b2 GSR to GR, b1 No Reward Skills
 
-	bf.Seek(175, 0)
+	_, _ = bf.Seek(questFrameVariant3Offset, 0)
 	questVariant3 := bf.ReadUint8()
-	questVariant3 &= 0b11011111 // disable Interception flag
-	bf.Seek(175, 0)
+	if !isDivaDefenseQuestType(eq.QuestType) {
+		// Only Diva Defense quests (quest_type 46/47/48 in EventQuests.sql,
+		// covering all ripped 58xxx quest files) have real server-side support
+		// for the interception mechanics; clear the flag everywhere else so the
+		// client doesn't expect them on a normal quest.
+		questVariant3 &= 0b11011111
+	}
+	_, _ = bf.Seek(questFrameVariant3Offset, 0)
 	bf.WriteUint8(questVariant3)
 
-	bf.Seek(0, 2)
+	_, _ = bf.Seek(0, 2)
 	ps.Uint8(bf, "", true) // Debug/Notes string for quest
 	return bf.Data(), nil
 }
@@ -355,58 +449,44 @@ func handleMsgMhfEnumerateQuest(s *Session, p mhfpacket.MHFPacket) {
 	bf := byteframe.NewByteFrame()
 	bf.WriteUint16(0)
 
-	rows, err := s.server.db.Query("SELECT id, COALESCE(max_players, 4) AS max_players, quest_type, quest_id, COALESCE(mark, 0) AS mark, COALESCE(flags, -1), start_time, COALESCE(active_days, 0) AS active_days, COALESCE(inactive_days, 0) AS inactive_days FROM event_quests ORDER BY quest_id")
+	quests, err := s.server.eventRepo.GetEventQuests()
 	if err == nil {
 		currentTime := time.Now()
-		tx, _ := s.server.db.Begin()
+		var updates []EventQuestUpdate
 
-		for rows.Next() {
-			var id, mark uint32
-			var questId, flags, activeDays, inactiveDays int
-			var maxPlayers, questType uint8
-			var startTime time.Time
-
-			err = rows.Scan(&id, &maxPlayers, &questType, &questId, &mark, &flags, &startTime, &activeDays, &inactiveDays)
-			if err != nil {
-				s.logger.Error("Failed to scan event quest row", zap.Error(err))
-				continue
-			}
-
+		for i, eq := range quests {
 			// Use the Event Cycling system
-			if activeDays > 0 {
-				cycleLength := (time.Duration(activeDays) + time.Duration(inactiveDays)) * 24 * time.Hour
+			if eq.ActiveDays > 0 {
+				cycleLength := (time.Duration(eq.ActiveDays) + time.Duration(eq.InactiveDays)) * 24 * time.Hour
 
 				// Count the number of full cycles elapsed since the last rotation.
-				extraCycles := int(currentTime.Sub(startTime) / cycleLength)
+				extraCycles := int(currentTime.Sub(eq.StartTime) / cycleLength)
 
 				if extraCycles > 0 {
 					// Calculate the rotation time based on start time, active duration, and inactive duration.
-					rotationTime := startTime.Add(time.Duration(activeDays+inactiveDays) * 24 * time.Hour * time.Duration(extraCycles))
+					rotationTime := eq.StartTime.Add(time.Duration(eq.ActiveDays+eq.InactiveDays) * 24 * time.Hour * time.Duration(extraCycles))
 					if currentTime.After(rotationTime) {
 						// Normalize rotationTime to 12PM JST to align with the in-game events update notification.
 						newRotationTime := time.Date(rotationTime.Year(), rotationTime.Month(), rotationTime.Day(), 12, 0, 0, 0, TimeAdjusted().Location())
 
-						_, err = tx.Exec("UPDATE event_quests SET start_time = $1 WHERE id = $2", newRotationTime, id)
-						if err != nil {
-							tx.Rollback() // Rollback if an error occurs
-							break
-						}
-						startTime = newRotationTime // Set the new start time so the quest can be used/removed immediately.
+						updates = append(updates, EventQuestUpdate{ID: eq.ID, StartTime: newRotationTime})
+						quests[i].StartTime = newRotationTime // Set the new start time so the quest can be used/removed immediately.
+						eq = quests[i]
 					}
 				}
 
 				// Check if the quest is currently active
-				if currentTime.Before(startTime) || currentTime.After(startTime.Add(time.Duration(activeDays)*24*time.Hour)) {
+				if currentTime.Before(eq.StartTime) || currentTime.After(eq.StartTime.Add(time.Duration(eq.ActiveDays)*24*time.Hour)) {
 					continue
 				}
 			}
 
-			data, err := makeEventQuest(s, rows)
+			data, err := makeEventQuest(s, eq)
 			if err != nil {
 				s.logger.Error("Failed to make event quest", zap.Error(err))
 				continue
 			} else {
-				if len(data) > 896 || len(data) < 352 {
+				if len(data) > questDataMaxLen || len(data) < questDataMinLen {
 					s.logger.Error("Invalid quest data length", zap.Int("len", len(data)))
 					continue
 				} else {
@@ -420,8 +500,9 @@ func handleMsgMhfEnumerateQuest(s *Session, p mhfpacket.MHFPacket) {
 			}
 		}
 
-		rows.Close()
-		tx.Commit()
+		if err := s.server.eventRepo.UpdateEventQuestStartTimes(updates); err != nil {
+			s.logger.Error("Failed to update event quest start times", zap.Error(err))
+		}
 	}
 
 	tuneValues := []tuneValue{
@@ -532,9 +613,9 @@ func handleMsgMhfEnumerateQuest(s *Session, p mhfpacket.MHFPacket) {
 		{ID: 1180, Value: 5},
 	}
 
-	tuneValues = append(tuneValues, tuneValue{1020, uint16(s.server.erupeConfig.GameplayOptions.GCPMultiplier * 100)})
+	tuneValues = append(tuneValues, tuneValue{1020, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.GCPMultiplier)})
 
-	tuneValues = append(tuneValues, tuneValue{1029, uint16(s.server.erupeConfig.GameplayOptions.GUrgentRate * 100)})
+	tuneValues = append(tuneValues, tuneValue{1029, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.GUrgentRate)})
 
 	if s.server.erupeConfig.GameplayOptions.DisableHunterNavi {
 		tuneValues = append(tuneValues, tuneValue{1037, 1})
@@ -557,29 +638,29 @@ func handleMsgMhfEnumerateQuest(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	// get_hrp_rate_from_rank
-	tuneValues = append(tuneValues, getTuneValueRange(3000, uint16(s.server.erupeConfig.GameplayOptions.HRPMultiplier*100))...)
-	tuneValues = append(tuneValues, getTuneValueRange(3338, uint16(s.server.erupeConfig.GameplayOptions.HRPMultiplierNC*100))...)
+	tuneValues = append(tuneValues, getTuneValueRange(3000, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.HRPMultiplier))...)
+	tuneValues = append(tuneValues, getTuneValueRange(3338, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.HRPMultiplierNC))...)
 	// get_srp_rate_from_rank
-	tuneValues = append(tuneValues, getTuneValueRange(3013, uint16(s.server.erupeConfig.GameplayOptions.SRPMultiplier*100))...)
-	tuneValues = append(tuneValues, getTuneValueRange(3351, uint16(s.server.erupeConfig.GameplayOptions.SRPMultiplierNC*100))...)
+	tuneValues = append(tuneValues, getTuneValueRange(3013, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.SRPMultiplier))...)
+	tuneValues = append(tuneValues, getTuneValueRange(3351, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.SRPMultiplierNC))...)
 	// get_grp_rate_from_rank
-	tuneValues = append(tuneValues, getTuneValueRange(3026, uint16(s.server.erupeConfig.GameplayOptions.GRPMultiplier*100))...)
-	tuneValues = append(tuneValues, getTuneValueRange(3364, uint16(s.server.erupeConfig.GameplayOptions.GRPMultiplierNC*100))...)
+	tuneValues = append(tuneValues, getTuneValueRange(3026, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.GRPMultiplier))...)
+	tuneValues = append(tuneValues, getTuneValueRange(3364, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.GRPMultiplierNC))...)
 	// get_gsrp_rate_from_rank
-	tuneValues = append(tuneValues, getTuneValueRange(3039, uint16(s.server.erupeConfig.GameplayOptions.GSRPMultiplier*100))...)
-	tuneValues = append(tuneValues, getTuneValueRange(3377, uint16(s.server.erupeConfig.GameplayOptions.GSRPMultiplierNC*100))...)
+	tuneValues = append(tuneValues, getTuneValueRange(3039, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.GSRPMultiplier))...)
+	tuneValues = append(tuneValues, getTuneValueRange(3377, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.GSRPMultiplierNC))...)
 	// get_zeny_rate_from_hrank
-	tuneValues = append(tuneValues, getTuneValueRange(3052, uint16(s.server.erupeConfig.GameplayOptions.ZennyMultiplier*100))...)
-	tuneValues = append(tuneValues, getTuneValueRange(3390, uint16(s.server.erupeConfig.GameplayOptions.ZennyMultiplierNC*100))...)
+	tuneValues = append(tuneValues, getTuneValueRange(3052, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.ZennyMultiplier))...)
+	tuneValues = append(tuneValues, getTuneValueRange(3390, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.ZennyMultiplierNC))...)
 	// get_zeny_rate_from_grank
-	tuneValues = append(tuneValues, getTuneValueRange(3078, uint16(s.server.erupeConfig.GameplayOptions.GZennyMultiplier*100))...)
-	tuneValues = append(tuneValues, getTuneValueRange(3416, uint16(s.server.erupeConfig.GameplayOptions.GZennyMultiplierNC*100))...)
+	tuneValues = append(tuneValues, getTuneValueRange(3078, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.GZennyMultiplier))...)
+	tuneValues = append(tuneValues, getTuneValueRange(3416, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.GZennyMultiplierNC))...)
 	// get_reward_rate_from_hrank
-	tuneValues = append(tuneValues, getTuneValueRange(3104, uint16(s.server.erupeConfig.GameplayOptions.MaterialMultiplier*100))...)
-	tuneValues = append(tuneValues, getTuneValueRange(3442, uint16(s.server.erupeConfig.GameplayOptions.MaterialMultiplierNC*100))...)
+	tuneValues = append(tuneValues, getTuneValueRange(3104, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.MaterialMultiplier))...)
+	tuneValues = append(tuneValues, getTuneValueRange(3442, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.MaterialMultiplierNC))...)
 	// get_reward_rate_from_grank
-	tuneValues = append(tuneValues, getTuneValueRange(3130, uint16(s.server.erupeConfig.GameplayOptions.GMaterialMultiplier*100))...)
-	tuneValues = append(tuneValues, getTuneValueRange(3468, uint16(s.server.erupeConfig.GameplayOptions.GMaterialMultiplierNC*100))...)
+	tuneValues = append(tuneValues, getTuneValueRange(3130, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.GMaterialMultiplier))...)
+	tuneValues = append(tuneValues, getTuneValueRange(3468, multiplierToTuneValue(s.server.erupeConfig.GameplayOptions.GMaterialMultiplierNC))...)
 	// get_lottery_rate_from_hrank
 	tuneValues = append(tuneValues, getTuneValueRange(3156, 0)...)
 	tuneValues = append(tuneValues, getTuneValueRange(3494, 0)...)
@@ -599,33 +680,25 @@ func handleMsgMhfEnumerateQuest(s *Session, p mhfpacket.MHFPacket) {
 	tuneValues = append(tuneValues, getTuneValueRange(3299, 200)...)
 	tuneValues = append(tuneValues, getTuneValueRange(3325, 300)...)
 
-	var temp []tuneValue
-	for i := range tuneValues {
-		if tuneValues[i].Value > 0 {
-			temp = append(temp, tuneValues[i])
-		}
-	}
-	tuneValues = temp
-
-	tuneLimit := 770
-	if _config.ErupeConfig.RealClientMode <= _config.G1 {
-		tuneLimit = 256
-	} else if _config.ErupeConfig.RealClientMode <= _config.G3 {
-		tuneLimit = 283
-	} else if _config.ErupeConfig.RealClientMode <= _config.GG {
-		tuneLimit = 315
-	} else if _config.ErupeConfig.RealClientMode <= _config.G61 {
-		tuneLimit = 332
-	} else if _config.ErupeConfig.RealClientMode <= _config.G7 {
-		tuneLimit = 339
-	} else if _config.ErupeConfig.RealClientMode <= _config.G81 {
-		tuneLimit = 396
-	} else if _config.ErupeConfig.RealClientMode <= _config.G91 {
-		tuneLimit = 694
-	} else if _config.ErupeConfig.RealClientMode <= _config.G101 {
-		tuneLimit = 704
-	} else if _config.ErupeConfig.RealClientMode <= _config.Z2 {
-		tuneLimit = 750
+	tuneLimit := tuneLimitZZ
+	if s.server.erupeConfig.RealClientMode <= cfg.G1 {
+		tuneLimit = tuneLimitG1
+	} else if s.server.erupeConfig.RealClientMode <= cfg.G3 {
+		tuneLimit = tuneLimitG3
+	} else if s.server.erupeConfig.RealClientMode <= cfg.GG {
+		tuneLimit = tuneLimitGG
+	} else if s.server.erupeConfig.RealClientMode <= cfg.G61 {
+		tuneLimit = tuneLimitG61
+	} else if s.server.erupeConfig.RealClientMode <= cfg.G7 {
+		tuneLimit = tuneLimitG7
+	} else if s.server.erupeConfig.RealClientMode <= cfg.G81 {
+		tuneLimit = tuneLimitG81
+	} else if s.server.erupeConfig.RealClientMode <= cfg.G91 {
+		tuneLimit = tuneLimitG91
+	} else if s.server.erupeConfig.RealClientMode <= cfg.G101 {
+		tuneLimit = tuneLimitG101
+	} else if s.server.erupeConfig.RealClientMode <= cfg.Z2 {
+		tuneLimit = tuneLimitZ2
 	}
 	if len(tuneValues) > tuneLimit {
 		tuneValues = tuneValues[:tuneLimit]
@@ -668,11 +741,18 @@ func handleMsgMhfEnumerateQuest(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	bf.WriteUint16(totalCount)
-	bf.WriteUint16(pkt.Offset)
-	bf.Seek(0, io.SeekStart)
+	bf.WriteUint16(pkt.Offset + returnedCount)
+	_, _ = bf.Seek(0, io.SeekStart)
 	bf.WriteUint16(returnedCount)
 
 	doAckBufSucceed(s, pkt.AckHandle, bf.Data())
+}
+
+// multiplierToTuneValue converts a float32 config multiplier (e.g. 0.20 for 20%)
+// into the uint16 percentage value expected by the client tune table. Uses
+// rounding to avoid float32 truncation artifacts such as 0.20*100 → 19.
+func multiplierToTuneValue(m float32) uint16 {
+	return uint16(math.Round(float64(m) * 100))
 }
 
 func getTuneValueRange(start uint16, value uint16) []tuneValue {
@@ -682,8 +762,6 @@ func getTuneValueRange(start uint16, value uint16) []tuneValue {
 	}
 	return tv
 }
-
-func handleMsgMhfEnterTournamentQuest(s *Session, p mhfpacket.MHFPacket) {}
 
 func handleMsgMhfGetUdBonusQuestInfo(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetUdBonusQuestInfo)

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	_config "erupe-ce/config"
 	"erupe-ce/common/mhfitem"
+	cfg "erupe-ce/config"
 	"erupe-ce/network/clientctx"
 	"erupe-ce/network/mhfpacket"
 	"erupe-ce/server/channelserver/compression/nullcomp"
@@ -18,9 +18,9 @@ import (
 // ============================================================================
 // SESSION LIFECYCLE INTEGRATION TESTS
 // Full end-to-end tests that simulate the complete player session lifecycle
-// 
+//
 // These tests address the core issue: handler-level tests don't catch problems
-// with the logout flow. Players report data loss because logout doesn't 
+// with the logout flow. Players report data loss because logout doesn't
 // trigger save handlers.
 //
 // Test Strategy:
@@ -52,9 +52,9 @@ func TestSessionLifecycle_BasicSaveLoadCycle(t *testing.T) {
 	session1 := createTestSessionForServerWithChar(server, charID, "LifecycleChar")
 	// Note: Not calling Start() since we're testing handlers directly, not packet processing
 
-	// Modify data via packet handlers
+	// Modify data via packet handlers (frontier_points is on users table since 9.2 migration)
 	initialPoints := uint32(5000)
-	_, err := db.Exec("UPDATE characters SET frontier_points = $1 WHERE id = $2", initialPoints, charID)
+	_, err := db.Exec("UPDATE users SET frontier_points = $1 WHERE id = $2", initialPoints, userID)
 	if err != nil {
 		t.Fatalf("Failed to set initial road points: %v", err)
 	}
@@ -84,15 +84,9 @@ func TestSessionLifecycle_BasicSaveLoadCycle(t *testing.T) {
 	t.Log("Sending savedata packet")
 	handleMsgMhfSavedata(session1, savePkt)
 
-	// Drain ACK
-	time.Sleep(100 * time.Millisecond)
-
 	// Now trigger logout via the actual logout flow
 	t.Log("Triggering logout via logoutPlayer")
 	logoutPlayer(session1)
-
-	// Give logout time to complete
-	time.Sleep(100 * time.Millisecond)
 
 	// ===== SESSION 2: Login again and verify data =====
 	t.Log("--- Starting Session 2: Login and verify data persists ---")
@@ -105,8 +99,6 @@ func TestSessionLifecycle_BasicSaveLoadCycle(t *testing.T) {
 		AckHandle: 2001,
 	}
 	handleMsgMhfLoaddata(session2, loadPkt)
-
-	time.Sleep(50 * time.Millisecond)
 
 	// Verify savedata persisted
 	var savedCompressed []byte
@@ -176,14 +168,11 @@ func TestSessionLifecycle_WarehouseDataPersistence(t *testing.T) {
 		createTestEquipmentItem(102, 3),
 	}
 
-	serializedEquip := mhfitem.SerializeWarehouseEquipment(equipment)
+	serializedEquip := mhfitem.SerializeWarehouseEquipment(equipment, cfg.ZZ)
 
 	// Save to warehouse directly (simulating a save handler)
-	_, err := db.Exec(`
-		INSERT INTO warehouse (character_id, equip0)
-		VALUES ($1, $2)
-		ON CONFLICT (character_id) DO UPDATE SET equip0 = $2
-	`, charID, serializedEquip)
+	_, _ = db.Exec("INSERT INTO warehouse (character_id) VALUES ($1) ON CONFLICT DO NOTHING", charID)
+	_, err := db.Exec("UPDATE warehouse SET equip0 = $1 WHERE character_id = $2", serializedEquip, charID)
 	if err != nil {
 		t.Fatalf("Failed to save warehouse: %v", err)
 	}
@@ -192,7 +181,6 @@ func TestSessionLifecycle_WarehouseDataPersistence(t *testing.T) {
 
 	// Logout
 	logoutPlayer(session1)
-	time.Sleep(100 * time.Millisecond)
 
 	// ===== SESSION 2: Verify warehouse contents =====
 	session2 := createTestSessionForServerWithChar(server, charID, "WarehouseChar")
@@ -243,7 +231,6 @@ func TestSessionLifecycle_KoryoPointsPersistence(t *testing.T) {
 
 	t.Logf("Adding %d Koryo points", addPoints)
 	handleMsgMhfAddKouryouPoint(session1, pkt)
-	time.Sleep(50 * time.Millisecond)
 
 	// Verify points were added in session 1
 	var points1 uint32
@@ -255,7 +242,6 @@ func TestSessionLifecycle_KoryoPointsPersistence(t *testing.T) {
 
 	// Logout
 	logoutPlayer(session1)
-	time.Sleep(100 * time.Millisecond)
 
 	// ===== SESSION 2: Verify Koryo points persist =====
 	session2 := createTestSessionForServerWithChar(server, charID, "KoryoChar")
@@ -295,9 +281,9 @@ func TestSessionLifecycle_MultipleDataTypesPersistence(t *testing.T) {
 	// ===== SESSION 1: Modify multiple data types =====
 	session1 := createTestSessionForServerWithChar(server, charID, "MultiChar")
 
-	// 1. Set Road Points
+	// 1. Set Road Points (frontier_points is on users table since 9.2 migration)
 	rdpPoints := uint32(7500)
-	_, err := db.Exec("UPDATE characters SET frontier_points = $1 WHERE id = $2", rdpPoints, charID)
+	_, err := db.Exec("UPDATE users SET frontier_points = $1 WHERE id = $2", rdpPoints, userID)
 	if err != nil {
 		t.Fatalf("Failed to set RdP: %v", err)
 	}
@@ -344,14 +330,10 @@ func TestSessionLifecycle_MultipleDataTypesPersistence(t *testing.T) {
 	}
 	handleMsgMhfSavedata(session1, savePkt)
 
-	// Give handlers time to process
-	time.Sleep(100 * time.Millisecond)
-
 	t.Log("Modified all data types in session 1")
 
 	// Logout
 	logoutPlayer(session1)
-	time.Sleep(100 * time.Millisecond)
 
 	// ===== SESSION 2: Verify all data persists =====
 	session2 := createTestSessionForServerWithChar(server, charID, "MultiChar")
@@ -361,13 +343,12 @@ func TestSessionLifecycle_MultipleDataTypesPersistence(t *testing.T) {
 		AckHandle: 5001,
 	}
 	handleMsgMhfLoaddata(session2, loadPkt)
-	time.Sleep(50 * time.Millisecond)
 
 	allPassed := true
 
-	// Verify 1: Road Points
+	// Verify 1: Road Points (frontier_points is on users table)
 	var loadedRdP uint32
-	db.QueryRow("SELECT frontier_points FROM characters WHERE id = $1", charID).Scan(&loadedRdP)
+	_ = db.QueryRow("SELECT frontier_points FROM users WHERE id = $1", userID).Scan(&loadedRdP)
 	if loadedRdP != rdpPoints {
 		t.Errorf("❌ RdP not persisted: got %d, want %d", loadedRdP, rdpPoints)
 		allPassed = false
@@ -377,7 +358,7 @@ func TestSessionLifecycle_MultipleDataTypesPersistence(t *testing.T) {
 
 	// Verify 2: Koryo Points
 	var loadedKoryo uint32
-	db.QueryRow("SELECT COALESCE(kouryou_point, 0) FROM characters WHERE id = $1", charID).Scan(&loadedKoryo)
+	_ = db.QueryRow("SELECT COALESCE(kouryou_point, 0) FROM characters WHERE id = $1", charID).Scan(&loadedKoryo)
 	if loadedKoryo != koryoPoints {
 		t.Errorf("❌ Koryo points not persisted: got %d, want %d", loadedKoryo, koryoPoints)
 		allPassed = false
@@ -387,7 +368,7 @@ func TestSessionLifecycle_MultipleDataTypesPersistence(t *testing.T) {
 
 	// Verify 3: Hunter Navi
 	var loadedNavi []byte
-	db.QueryRow("SELECT hunternavi FROM characters WHERE id = $1", charID).Scan(&loadedNavi)
+	_ = db.QueryRow("SELECT hunternavi FROM characters WHERE id = $1", charID).Scan(&loadedNavi)
 	if len(loadedNavi) == 0 {
 		t.Error("❌ Hunter Navi not saved")
 		allPassed = false
@@ -400,7 +381,7 @@ func TestSessionLifecycle_MultipleDataTypesPersistence(t *testing.T) {
 
 	// Verify 4: Savedata
 	var savedCompressed []byte
-	db.QueryRow("SELECT savedata FROM characters WHERE id = $1", charID).Scan(&savedCompressed)
+	_ = db.QueryRow("SELECT savedata FROM characters WHERE id = $1", charID).Scan(&savedCompressed)
 	if len(savedCompressed) == 0 {
 		t.Error("❌ Savedata not saved")
 		allPassed = false
@@ -449,9 +430,9 @@ func TestSessionLifecycle_DisconnectWithoutLogout(t *testing.T) {
 	// ===== SESSION 1: Modify data then disconnect without explicit logout =====
 	session1 := createTestSessionForServerWithChar(server, charID, "DisconnectChar")
 
-	// Modify data
+	// Modify data (frontier_points is on users table since 9.2 migration)
 	rdpPoints := uint32(9999)
-	_, err := db.Exec("UPDATE characters SET frontier_points = $1 WHERE id = $2", rdpPoints, charID)
+	_, err := db.Exec("UPDATE users SET frontier_points = $1 WHERE id = $2", rdpPoints, userID)
 	if err != nil {
 		t.Fatalf("Failed to set RdP: %v", err)
 	}
@@ -475,13 +456,11 @@ func TestSessionLifecycle_DisconnectWithoutLogout(t *testing.T) {
 		RawDataPayload: compressed,
 	}
 	handleMsgMhfSavedata(session1, savePkt)
-	time.Sleep(100 * time.Millisecond)
 
 	// Simulate disconnect by calling logoutPlayer (which is called by recvLoop on EOF)
 	// In real scenario, this is triggered by connection close
 	t.Log("Simulating ungraceful disconnect")
 	logoutPlayer(session1)
-	time.Sleep(100 * time.Millisecond)
 
 	// ===== SESSION 2: Verify data saved despite ungraceful disconnect =====
 	session2 := createTestSessionForServerWithChar(server, charID, "DisconnectChar")
@@ -538,20 +517,19 @@ func TestSessionLifecycle_RapidReconnect(t *testing.T) {
 
 		session := createTestSessionForServerWithChar(server, charID, "RapidChar")
 
-		// Modify road points each cycle
+		// Modify road points each cycle (frontier_points is on users table since 9.2 migration)
 		points := uint32(1000 * cycle)
-		_, err := db.Exec("UPDATE characters SET frontier_points = $1 WHERE id = $2", points, charID)
+		_, err := db.Exec("UPDATE users SET frontier_points = $1 WHERE id = $2", points, userID)
 		if err != nil {
 			t.Fatalf("Cycle %d: Failed to update points: %v", cycle, err)
 		}
 
 		// Logout quickly
 		logoutPlayer(session)
-		time.Sleep(30 * time.Millisecond)
 
 		// Verify points persisted
 		var loadedPoints uint32
-		db.QueryRow("SELECT frontier_points FROM characters WHERE id = $1", charID).Scan(&loadedPoints)
+		_ = db.QueryRow("SELECT frontier_points FROM users WHERE id = $1", userID).Scan(&loadedPoints)
 		if loadedPoints != points {
 			t.Errorf("❌ Cycle %d: Points not persisted: got %d, want %d", cycle, loadedPoints, points)
 		} else {
@@ -562,11 +540,15 @@ func TestSessionLifecycle_RapidReconnect(t *testing.T) {
 
 // Helper function to create test equipment item with proper initialization
 func createTestEquipmentItem(itemID uint16, warehouseID uint32) mhfitem.MHFEquipment {
+	sigils := make([]mhfitem.MHFSigil, 3)
+	for i := range sigils {
+		sigils[i].Effects = make([]mhfitem.MHFSigilEffect, 3)
+	}
 	return mhfitem.MHFEquipment{
 		ItemID:      itemID,
 		WarehouseID: warehouseID,
 		Decorations: make([]mhfitem.MHFItem, 3),
-		Sigils:      make([]mhfitem.MHFSigil, 3),
+		Sigils:      sigils,
 	}
 }
 
@@ -579,18 +561,35 @@ func createTestServerWithDB(t *testing.T, db *sqlx.DB) *Server {
 	// Create minimal server for testing
 	// Note: This may need adjustment based on actual Server initialization
 	server := &Server{
-		db:              db,
-		sessions:        make(map[net.Conn]*Session),
-		stages:          make(map[string]*Stage),
-		userBinaryParts: make(map[userBinaryPartID][]byte),
-		semaphore:       make(map[string]*Semaphore),
-		erupeConfig:     _config.ErupeConfig,
-		isShuttingDown:  false,
+		db:         db,
+		sessions:   make(map[net.Conn]*Session),
+		userBinary: NewUserBinaryStore(),
+		minidata:   NewMinidataStore(),
+		semaphore:  make(map[string]*Semaphore),
+		erupeConfig: &cfg.Config{
+			RealClientMode: cfg.ZZ,
+		},
+		isShuttingDown: false,
+		done:           make(chan struct{}),
 	}
 
 	// Create logger
 	logger, _ := zap.NewDevelopment()
 	server.logger = logger
+
+	// Initialize repositories
+	server.charRepo = NewCharacterRepository(db)
+	server.guildRepo = NewGuildRepository(db)
+	server.userRepo = NewUserRepository(db)
+	server.gachaRepo = NewGachaRepository(db, nil)
+	server.houseRepo = NewHouseRepository(db)
+	server.festaRepo = NewFestaRepository(db)
+	server.towerRepo = NewTowerRepository(db)
+	server.rengokuRepo = NewRengokuRepository(db)
+	server.mailRepo = NewMailRepository(db)
+	server.stampRepo = NewStampRepository(db)
+	server.distRepo = NewDistributionRepository(db)
+	server.sessionRepo = NewSessionRepository(db)
 
 	return server
 }
@@ -599,7 +598,7 @@ func createTestServerWithDB(t *testing.T, db *sqlx.DB) *Server {
 func createTestSessionForServerWithChar(server *Server, charID uint32, name string) *Session {
 	mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 	mockNetConn := NewMockNetConn() // Create a mock net.Conn for the session map key
-	
+
 	session := &Session{
 		logger:        server.logger,
 		server:        server,
@@ -620,4 +619,3 @@ func createTestSessionForServerWithChar(server *Server, charID uint32, name stri
 
 	return session
 }
-

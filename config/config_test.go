@@ -1,4 +1,4 @@
-package _config
+package config
 
 import (
 	"testing"
@@ -94,14 +94,6 @@ func TestModeConstants(t *testing.T) {
 	}
 }
 
-// TestIsTestEnvironment tests the isTestEnvironment function
-func TestIsTestEnvironment(t *testing.T) {
-	result := isTestEnvironment()
-	if !result {
-		t.Error("isTestEnvironment() should return true when running tests")
-	}
-}
-
 // TestVersionStringsLength verifies versionStrings has correct length
 func TestVersionStringsLength(t *testing.T) {
 	expectedCount := 41 // S1 through ZZ = 41 versions
@@ -116,14 +108,14 @@ func TestVersionStringsContent(t *testing.T) {
 		index    int
 		expected string
 	}{
-		{0, "S1.0"},    // S1
-		{14, "S10"},    // S10
-		{15, "FW.1"},   // F1
-		{19, "FW.5"},   // F5
-		{20, "G1"},     // G1
-		{38, "Z1"},     // Z1
-		{39, "Z2"},     // Z2
-		{40, "ZZ"},     // ZZ
+		{0, "S1.0"},  // S1
+		{14, "S10"},  // S10
+		{15, "FW.1"}, // F1
+		{19, "FW.5"}, // F5
+		{20, "G1"},   // G1
+		{38, "Z1"},   // Z1
+		{39, "Z2"},   // Z2
+		{40, "ZZ"},   // ZZ
 	}
 
 	for _, tt := range tests {
@@ -135,7 +127,10 @@ func TestVersionStringsContent(t *testing.T) {
 
 // TestGetOutboundIP4 tests IP detection
 func TestGetOutboundIP4(t *testing.T) {
-	ip := getOutboundIP4()
+	ip, err := getOutboundIP4()
+	if err != nil {
+		t.Fatalf("getOutboundIP4() returned error: %v", err)
+	}
 	if ip == nil {
 		t.Error("getOutboundIP4() returned nil IP")
 	}
@@ -154,25 +149,26 @@ func TestGetOutboundIP4(t *testing.T) {
 // TestConfigStructTypes verifies Config struct fields have correct types
 func TestConfigStructTypes(t *testing.T) {
 	cfg := &Config{
-		Host:                   "localhost",
-		BinPath:                "/path/to/bin",
-		Language:               "en",
-		DisableSoftCrash:       false,
-		HideLoginNotice:        false,
-		LoginNotices:           []string{"Notice"},
-		PatchServerManifest:    "http://patch.example.com",
-		PatchServerFile:        "http://files.example.com",
-		DeleteOnSaveCorruption: false,
-		ClientMode:             "ZZ",
-		RealClientMode:         ZZ,
-		QuestCacheExpiry:       3600,
-		CommandPrefix:          "!",
-		AutoCreateAccount:      false,
-		LoopDelay:              100,
-		DefaultCourses:         []uint16{1, 2, 3},
-		EarthStatus:            1,
-		EarthID:                1,
-		EarthMonsters:          []int32{1, 2, 3},
+		Host:                      "localhost",
+		BinPath:                   "/path/to/bin",
+		Language:                  "en",
+		DisableShutdownCountdown:  false,
+		HideLoginNotice:           false,
+		LoginNotices:              []string{"Notice"},
+		PatchServerManifest:       "http://patch.example.com",
+		PatchServerFile:           "http://files.example.com",
+		DeleteOnSaveCorruption:    false,
+		DisableSaveIntegrityCheck: false,
+		ClientMode:                "ZZ",
+		RealClientMode:            ZZ,
+		QuestCacheExpiry:          3600,
+		CommandPrefix:             "!",
+		AutoCreateAccount:         false,
+		LoopDelay:                 100,
+		DefaultCourses:            []uint16{1, 2, 3},
+		EarthStatus:               1,
+		EarthID:                   1,
+		EarthMonsters:             []int32{1, 2, 3},
 		SaveDumps: SaveDumpOptions{
 			Enabled:    true,
 			RawEnabled: false,
@@ -284,17 +280,17 @@ func TestDebugOptions(t *testing.T) {
 // TestGameplayOptions verifies GameplayOptions struct
 func TestGameplayOptions(t *testing.T) {
 	opts := GameplayOptions{
-		MinFeatureWeapons:       2,
-		MaxFeatureWeapons:       10,
-		MaximumNP:               999999,
-		MaximumRP:               9999,
-		MaximumFP:               999999999,
-		MezFesSoloTickets:       100,
-		MezFesGroupTickets:      50,
-		DisableHunterNavi:       true,
-		EnableKaijiEvent:        true,
-		EnableHiganjimaEvent:    false,
-		EnableNierEvent:         false,
+		MinFeatureWeapons:    2,
+		MaxFeatureWeapons:    10,
+		MaximumNP:            999999,
+		MaximumRP:            9999,
+		MaximumFP:            999999999,
+		MezFesSoloTickets:    100,
+		MezFesGroupTickets:   50,
+		DisableHunterNavi:    true,
+		EnableKaijiEvent:     true,
+		EnableHiganjimaEvent: false,
+		EnableNierEvent:      false,
 	}
 
 	if opts.MinFeatureWeapons != 2 {
@@ -494,12 +490,12 @@ func TestEntrance(t *testing.T) {
 // TestEntranceServerInfo verifies EntranceServerInfo struct
 func TestEntranceServerInfo(t *testing.T) {
 	info := EntranceServerInfo{
-		IP:                "192.168.1.1",
-		Type:              1,
-		Season:            0,
-		Recommended:       0,
-		Name:              "Server 1",
-		Description:       "Main server",
+		IP:                 "192.168.1.1",
+		Type:               1,
+		Season:             0,
+		Recommended:        0,
+		Name:               "Server 1",
+		Description:        "Main server",
 		AllowedClientFlags: 4096,
 		Channels: []EntranceChannelInfo{
 			{Port: 10001, MaxPlayers: 4, CurrentPlayers: 2},
@@ -533,6 +529,34 @@ func TestEntranceChannelInfo(t *testing.T) {
 	}
 	if info.CurrentPlayers != 2 {
 		t.Error("EntranceChannelInfo.CurrentPlayers mismatch")
+	}
+}
+
+// TestEntranceChannelInfoIsEnabled tests the Enabled field and IsEnabled helper
+func TestEntranceChannelInfoIsEnabled(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name    string
+		enabled *bool
+		want    bool
+	}{
+		{"nil defaults to true", nil, true},
+		{"explicit true", &trueVal, true},
+		{"explicit false", &falseVal, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := EntranceChannelInfo{
+				Port:    10001,
+				Enabled: tt.enabled,
+			}
+			if got := info.IsEnabled(); got != tt.want {
+				t.Errorf("IsEnabled() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -604,9 +628,9 @@ func TestGameplayOptionsConstraints(t *testing.T) {
 		{
 			name: "valid multipliers",
 			opts: GameplayOptions{
-				HRPMultiplier:     1.5,
-				GRPMultiplier:     1.2,
-				ZennyMultiplier:   1.0,
+				HRPMultiplier:      1.5,
+				GRPMultiplier:      1.2,
+				ZennyMultiplier:    1.0,
 				MaterialMultiplier: 1.3,
 			},
 			ok: true,
@@ -651,7 +675,7 @@ func TestModeValueRanges(t *testing.T) {
 // TestConfigDefaults tests default configuration creation
 func TestConfigDefaults(t *testing.T) {
 	cfg := &Config{
-		ClientMode:   "ZZ",
+		ClientMode:     "ZZ",
 		RealClientMode: ZZ,
 	}
 
@@ -676,14 +700,6 @@ func BenchmarkModeString(b *testing.B) {
 func BenchmarkGetOutboundIP4(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = getOutboundIP4()
-	}
-}
-
-// BenchmarkIsTestEnvironment benchmarks test environment detection
-func BenchmarkIsTestEnvironment(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = isTestEnvironment()
+		_, _ = getOutboundIP4()
 	}
 }

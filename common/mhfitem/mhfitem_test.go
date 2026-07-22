@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"erupe-ce/common/byteframe"
 	"erupe-ce/common/token"
-	_config "erupe-ce/config"
+	cfg "erupe-ce/config"
 	"testing"
 )
 
@@ -15,7 +15,7 @@ func TestReadWarehouseItem(t *testing.T) {
 	bf.WriteUint16(5)      // Quantity
 	bf.WriteUint32(999999) // Unk0
 
-	bf.Seek(0, 0)
+	_, _ = bf.Seek(0, 0)
 	item := ReadWarehouseItem(bf)
 
 	if item.WarehouseID != 12345 {
@@ -40,7 +40,7 @@ func TestReadWarehouseItem_ZeroWarehouseID(t *testing.T) {
 	bf.WriteUint16(5)   // Quantity
 	bf.WriteUint32(0)   // Unk0
 
-	bf.Seek(0, 0)
+	_, _ = bf.Seek(0, 0)
 	item := ReadWarehouseItem(bf)
 
 	if item.WarehouseID == 0 {
@@ -119,11 +119,11 @@ func TestSerializeWarehouseItems_Empty(t *testing.T) {
 
 func TestDiffItemStacks(t *testing.T) {
 	tests := []struct {
-		name     string
-		old      []MHFItemStack
-		update   []MHFItemStack
-		wantLen  int
-		checkFn  func(t *testing.T, result []MHFItemStack)
+		name    string
+		old     []MHFItemStack
+		update  []MHFItemStack
+		wantLen int
+		checkFn func(t *testing.T, result []MHFItemStack)
 	}{
 		{
 			name: "update existing quantity",
@@ -210,12 +210,7 @@ func TestDiffItemStacks(t *testing.T) {
 }
 
 func TestReadWarehouseEquipment(t *testing.T) {
-	// Save original config
-	originalMode := _config.ErupeConfig.RealClientMode
-	defer func() {
-		_config.ErupeConfig.RealClientMode = originalMode
-	}()
-	_config.ErupeConfig.RealClientMode = _config.Z1
+	mode := cfg.Z1
 
 	bf := byteframe.NewByteFrame()
 	bf.WriteUint32(12345) // WarehouseID
@@ -247,8 +242,8 @@ func TestReadWarehouseEquipment(t *testing.T) {
 	// Unk1 (Z1+)
 	bf.WriteUint16(9999)
 
-	bf.Seek(0, 0)
-	equipment := ReadWarehouseEquipment(bf)
+	_, _ = bf.Seek(0, 0)
+	equipment := ReadWarehouseEquipment(bf, mode)
 
 	if equipment.WarehouseID != 12345 {
 		t.Errorf("WarehouseID = %d, want 12345", equipment.WarehouseID)
@@ -274,12 +269,7 @@ func TestReadWarehouseEquipment(t *testing.T) {
 }
 
 func TestReadWarehouseEquipment_ZeroWarehouseID(t *testing.T) {
-	// Save original config
-	originalMode := _config.ErupeConfig.RealClientMode
-	defer func() {
-		_config.ErupeConfig.RealClientMode = originalMode
-	}()
-	_config.ErupeConfig.RealClientMode = _config.Z1
+	mode := cfg.Z1
 
 	bf := byteframe.NewByteFrame()
 	bf.WriteUint32(0) // WarehouseID = 0
@@ -303,8 +293,8 @@ func TestReadWarehouseEquipment_ZeroWarehouseID(t *testing.T) {
 	}
 	bf.WriteUint16(0)
 
-	bf.Seek(0, 0)
-	equipment := ReadWarehouseEquipment(bf)
+	_, _ = bf.Seek(0, 0)
+	equipment := ReadWarehouseEquipment(bf, mode)
 
 	if equipment.WarehouseID == 0 {
 		t.Error("WarehouseID should be replaced with random value when input is 0")
@@ -312,12 +302,7 @@ func TestReadWarehouseEquipment_ZeroWarehouseID(t *testing.T) {
 }
 
 func TestMHFEquipment_ToBytes(t *testing.T) {
-	// Save original config
-	originalMode := _config.ErupeConfig.RealClientMode
-	defer func() {
-		_config.ErupeConfig.RealClientMode = originalMode
-	}()
-	_config.ErupeConfig.RealClientMode = _config.Z1
+	mode := cfg.Z1
 
 	equipment := MHFEquipment{
 		WarehouseID: 12345,
@@ -333,9 +318,9 @@ func TestMHFEquipment_ToBytes(t *testing.T) {
 		equipment.Sigils[i].Effects = make([]MHFSigilEffect, 3)
 	}
 
-	data := equipment.ToBytes()
+	data := equipment.ToBytes(mode)
 	bf := byteframe.NewByteFrameFromBytes(data)
-	readEquipment := ReadWarehouseEquipment(bf)
+	readEquipment := ReadWarehouseEquipment(bf, mode)
 
 	if readEquipment.WarehouseID != equipment.WarehouseID {
 		t.Errorf("WarehouseID = %d, want %d", readEquipment.WarehouseID, equipment.WarehouseID)
@@ -352,12 +337,7 @@ func TestMHFEquipment_ToBytes(t *testing.T) {
 }
 
 func TestSerializeWarehouseEquipment(t *testing.T) {
-	// Save original config
-	originalMode := _config.ErupeConfig.RealClientMode
-	defer func() {
-		_config.ErupeConfig.RealClientMode = originalMode
-	}()
-	_config.ErupeConfig.RealClientMode = _config.Z1
+	mode := cfg.Z1
 
 	equipment := []MHFEquipment{
 		{
@@ -383,7 +363,7 @@ func TestSerializeWarehouseEquipment(t *testing.T) {
 		}
 	}
 
-	data := SerializeWarehouseEquipment(equipment)
+	data := SerializeWarehouseEquipment(equipment, mode)
 	bf := byteframe.NewByteFrameFromBytes(data)
 
 	count := bf.ReadUint16()
@@ -393,12 +373,7 @@ func TestSerializeWarehouseEquipment(t *testing.T) {
 }
 
 func TestMHFEquipment_RoundTrip(t *testing.T) {
-	// Test that we can write and read back the same equipment
-	originalMode := _config.ErupeConfig.RealClientMode
-	defer func() {
-		_config.ErupeConfig.RealClientMode = originalMode
-	}()
-	_config.ErupeConfig.RealClientMode = _config.Z1
+	mode := cfg.Z1
 
 	original := MHFEquipment{
 		WarehouseID: 99999,
@@ -419,11 +394,11 @@ func TestMHFEquipment_RoundTrip(t *testing.T) {
 	}
 
 	// Write to bytes
-	data := original.ToBytes()
+	data := original.ToBytes(mode)
 
 	// Read back
 	bf := byteframe.NewByteFrameFromBytes(data)
-	recovered := ReadWarehouseEquipment(bf)
+	recovered := ReadWarehouseEquipment(bf, mode)
 
 	// Compare
 	if recovered.WarehouseID != original.WarehouseID {

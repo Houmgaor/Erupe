@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"erupe-ce/common/byteframe"
+	cfg "erupe-ce/config"
 	"erupe-ce/network/mhfpacket"
 	"os"
 	"path/filepath"
@@ -61,7 +62,7 @@ func TestBackportQuestBasic(t *testing.T) {
 				}
 			}()
 
-			result := BackportQuest(data)
+			result := BackportQuest(data, cfg.ZZ)
 			if result != nil && !tc.verify(result) {
 				t.Errorf("BackportQuest verification failed for result: %d bytes", len(result))
 			}
@@ -72,10 +73,10 @@ func TestBackportQuestBasic(t *testing.T) {
 // TestFindSubSliceIndices tests byte slice pattern finding
 func TestFindSubSliceIndices(t *testing.T) {
 	tests := []struct {
-		name        string
-		data        []byte
-		pattern     []byte
-		expected    int
+		name     string
+		data     []byte
+		pattern  []byte
+		expected int
 	}{
 		{
 			name:     "single_match",
@@ -212,9 +213,9 @@ func TestEnumerateQuestBasicStructure(t *testing.T) {
 	bf := byteframe.NewByteFrame()
 
 	// Build a minimal response structure
-	bf.WriteUint16(0)      // Returned count
+	bf.WriteUint16(0)                                  // Returned count
 	bf.WriteUint16(uint16(time.Now().Unix() & 0xFFFF)) // Unix timestamp offset
-	bf.WriteUint16(0)      // Tune values count
+	bf.WriteUint16(0)                                  // Tune values count
 
 	data := bf.Data()
 
@@ -230,6 +231,37 @@ func TestEnumerateQuestBasicStructure(t *testing.T) {
 	returnedCount := bf2.ReadUint16()
 	if returnedCount != 0 {
 		t.Errorf("Expected 0 returned count, got %d", returnedCount)
+	}
+}
+
+// TestEnumerateQuestNextOffsetAdvances is a regression test for issue #194:
+// the response's offset field must be pkt.Offset+returnedCount (the offset
+// the client should request next), not pkt.Offset unchanged. Returning the
+// unchanged offset causes the ZZ client to loop forever requesting the same
+// page once event_quests spans more than one page (e.g. 574 rows, page
+// boundary at offset=512).
+func TestEnumerateQuestNextOffsetAdvances(t *testing.T) {
+	tests := []struct {
+		name          string
+		requestOffset uint16
+		returnedCount uint16
+		wantNext      uint16
+	}{
+		{name: "first_page_full", requestOffset: 0, returnedCount: 512, wantNext: 512},
+		{name: "second_page_remainder", requestOffset: 512, returnedCount: 62, wantNext: 574},
+		{name: "no_results_offset_unchanged", requestOffset: 512, returnedCount: 0, wantNext: 512},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			nextOffset := tc.requestOffset + tc.returnedCount
+			if nextOffset != tc.wantNext {
+				t.Errorf("next offset = %d, want %d", nextOffset, tc.wantNext)
+			}
+			if tc.returnedCount > 0 && nextOffset == tc.requestOffset {
+				t.Errorf("next offset must not equal request offset when results were returned (would cause an infinite client request loop)")
+			}
+		})
 	}
 }
 
@@ -300,12 +332,12 @@ func TestEnumerateQuestTuneValuesEncoding(t *testing.T) {
 // TestEventQuestCycleCalculation tests event quest cycle calculations
 func TestEventQuestCycleCalculation(t *testing.T) {
 	tests := []struct {
-		name             string
-		startTime        time.Time
-		activeDays       int
-		inactiveDays     int
-		currentTime      time.Time
-		shouldBeActive   bool
+		name           string
+		startTime      time.Time
+		activeDays     int
+		inactiveDays   int
+		currentTime    time.Time
+		shouldBeActive bool
 	}{
 		{
 			name:           "active_period",
@@ -408,8 +440,8 @@ func TestMakeEventQuestPacketStructure(t *testing.T) {
 	questType := uint8(16)
 
 	bf.WriteUint32(questID)
-	bf.WriteUint32(0)  // Unk
-	bf.WriteUint8(0)   // Unk
+	bf.WriteUint32(0) // Unk
+	bf.WriteUint8(0)  // Unk
 	bf.WriteUint8(maxPlayers)
 	bf.WriteUint8(questType)
 	bf.WriteBool(true) // Multi-player
@@ -603,17 +635,16 @@ func TestQuestFileLoadingErrors(t *testing.T) {
 	}
 }
 
-// TestTournamentQuestEntryStub tests the stub tournament quest handler
-func TestTournamentQuestEntryStub(t *testing.T) {
+// TestTournamentQuestEntryHandler tests the tournament quest entry handler.
+func TestTournamentQuestEntryHandler(t *testing.T) {
 	mockConn := &MockCryptConn{sentPackets: make([][]byte, 0)}
 	s := createTestSession(mockConn)
+	s.server.tournamentRepo = &mockTournamentRepo{}
 
-	pkt := &mhfpacket.MsgMhfEnterTournamentQuest{}
+	pkt := &mhfpacket.MsgMhfEnterTournamentQuest{AckHandle: 1}
 
-	// This tests that the stub function doesn't panic
 	handleMsgMhfEnterTournamentQuest(s, pkt)
 
-	// Verify no crash occurred (pass if we reach here)
 	if s.logger == nil {
 		t.Errorf("Session corrupted")
 	}
@@ -625,13 +656,13 @@ func TestGetUdBonusQuestInfoStructure(t *testing.T) {
 	bf.SetLE()
 
 	// Example UD bonus quest info entry
-	bf.WriteUint8(0)              // Unk0
-	bf.WriteUint8(0)              // Unk1
-	bf.WriteUint32(uint32(time.Now().Unix())) // StartTime
-	bf.WriteUint32(uint32(time.Now().Add(30*24*time.Hour).Unix())) // EndTime
-	bf.WriteUint32(0)             // Unk4
-	bf.WriteUint8(0)              // Unk5
-	bf.WriteUint8(0)              // Unk6
+	bf.WriteUint8(0)                                                   // Unk0
+	bf.WriteUint8(0)                                                   // Unk1
+	bf.WriteUint32(uint32(time.Now().Unix()))                          // StartTime
+	bf.WriteUint32(uint32(time.Now().Add(30 * 24 * time.Hour).Unix())) // EndTime
+	bf.WriteUint32(0)                                                  // Unk4
+	bf.WriteUint8(0)                                                   // Unk5
+	bf.WriteUint8(0)                                                   // Unk6
 
 	data := bf.Data()
 
@@ -645,8 +676,8 @@ func TestGetUdBonusQuestInfoStructure(t *testing.T) {
 	bf2 := byteframe.NewByteFrameFromBytes(data)
 	bf2.SetLE()
 
-	bf2.ReadUint8()  // Unk0
-	bf2.ReadUint8()  // Unk1
+	bf2.ReadUint8() // Unk0
+	bf2.ReadUint8() // Unk1
 	startTime := bf2.ReadUint32()
 	endTime := bf2.ReadUint32()
 	bf2.ReadUint32() // Unk4
@@ -664,9 +695,9 @@ func BenchmarkQuestEnumeration(b *testing.B) {
 		bf := byteframe.NewByteFrame()
 
 		// Build a response with tune values
-		bf.WriteUint16(0)      // Returned count
+		bf.WriteUint16(0) // Returned count
 		bf.WriteUint16(uint16(time.Now().Unix() & 0xFFFF))
-		bf.WriteUint16(100)    // 100 tune values
+		bf.WriteUint16(100) // 100 tune values
 
 		for j := 0; j < 100; j++ {
 			bf.WriteUint16(uint16(j))
@@ -685,7 +716,7 @@ func BenchmarkBackportQuest(b *testing.B) {
 	binary.LittleEndian.PutUint32(data[0:4], 100)
 
 	for i := 0; i < b.N; i++ {
-		_ = BackportQuest(data)
+		_ = BackportQuest(data, cfg.ZZ)
 	}
 }
 
@@ -779,5 +810,38 @@ func TestHandleMsgSysGetFile_ExistingQuestFile(t *testing.T) {
 	errorCode := parseAckFromChannel(t, s)
 	if errorCode != 0 {
 		t.Errorf("expected success ack (ErrorCode=0) for existing quest file, got ErrorCode=%d", errorCode)
+	}
+}
+
+func TestHandleMsgMhfLoadFavoriteQuest(t *testing.T) {
+	server := createMockServer()
+	server.charRepo = newMockCharacterRepo()
+	session := createMockSession(100, server)
+
+	pkt := &mhfpacket.MsgMhfLoadFavoriteQuest{AckHandle: 1}
+	handleMsgMhfLoadFavoriteQuest(session, pkt)
+
+	select {
+	case <-session.sendPackets:
+	default:
+		t.Error("expected response")
+	}
+}
+
+func TestHandleMsgMhfSaveFavoriteQuest(t *testing.T) {
+	server := createMockServer()
+	server.charRepo = newMockCharacterRepo()
+	session := createMockSession(100, server)
+
+	pkt := &mhfpacket.MsgMhfSaveFavoriteQuest{
+		AckHandle: 1,
+		Data:      []byte{0x01, 0x00, 0x01, 0x00, 0x01},
+	}
+	handleMsgMhfSaveFavoriteQuest(session, pkt)
+
+	select {
+	case <-session.sendPackets:
+	default:
+		t.Error("expected response")
 	}
 }

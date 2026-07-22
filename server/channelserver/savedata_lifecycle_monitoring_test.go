@@ -25,19 +25,19 @@ import (
 
 // SaveHandlerMonitor tracks calls to save handlers
 type SaveHandlerMonitor struct {
-	mu                      sync.Mutex
-	savedataCallCount       int
-	hunterNaviCallCount     int
-	kouryouPointCallCount   int
-	warehouseCallCount      int
-	decomysetCallCount      int
-	savedataAtLogout        bool
-	lastSavedataTime        time.Time
-	lastHunterNaviTime      time.Time
-	lastKouryouPointTime    time.Time
-	lastWarehouseTime       time.Time
-	lastDecomysetTime       time.Time
-	logoutTime              time.Time
+	mu                    sync.Mutex
+	savedataCallCount     int
+	hunterNaviCallCount   int
+	kouryouPointCallCount int
+	warehouseCallCount    int
+	decomysetCallCount    int
+	savedataAtLogout      bool
+	lastSavedataTime      time.Time
+	lastHunterNaviTime    time.Time
+	lastKouryouPointTime  time.Time
+	lastWarehouseTime     time.Time
+	lastDecomysetTime     time.Time
+	logoutTime            time.Time
 }
 
 func (m *SaveHandlerMonitor) RecordSavedata() {
@@ -79,7 +79,7 @@ func (m *SaveHandlerMonitor) RecordLogout() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.logoutTime = time.Now()
-	
+
 	// Check if savedata was called within 5 seconds before logout
 	if !m.lastSavedataTime.IsZero() && m.logoutTime.Sub(m.lastSavedataTime) < 5*time.Second {
 		m.savedataAtLogout = true
@@ -89,7 +89,7 @@ func (m *SaveHandlerMonitor) RecordLogout() {
 func (m *SaveHandlerMonitor) GetStats() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	return fmt.Sprintf(`Save Handler Statistics:
   - Savedata calls: %d (last: %v)
   - HunterNavi calls: %d (last: %v)
@@ -155,13 +155,11 @@ func TestMonitored_SaveHandlerInvocationDuringLogout(t *testing.T) {
 	t.Log("Calling handleMsgMhfSavedata during session")
 	handleMsgMhfSavedata(session, savePkt)
 	monitor.RecordSavedata()
-	time.Sleep(100 * time.Millisecond)
 
 	// Now trigger logout
 	t.Log("Triggering logout - monitoring if save handlers are called")
 	monitor.RecordLogout()
 	logoutPlayer(session)
-	time.Sleep(100 * time.Millisecond)
 
 	// Report statistics
 	t.Log(monitor.GetStats())
@@ -233,12 +231,10 @@ func TestWithLogging_LogoutFlowAnalysis(t *testing.T) {
 		RawDataPayload: compressed,
 	}
 	handleMsgMhfSavedata(session, savePkt)
-	time.Sleep(50 * time.Millisecond)
 
 	// Trigger logout
 	t.Log("Triggering logout with logging enabled")
 	logoutPlayer(session)
-	time.Sleep(100 * time.Millisecond)
 
 	// Analyze logs
 	allLogs := logs.All()
@@ -317,11 +313,9 @@ func TestConcurrent_MultipleSessionsSaving(t *testing.T) {
 				RawDataPayload: compressed,
 			}
 			handleMsgMhfSavedata(session, savePkt)
-			time.Sleep(50 * time.Millisecond)
 
 			// Logout
 			logoutPlayer(session)
-			time.Sleep(50 * time.Millisecond)
 
 			// Verify data saved
 			var savedCompressed []byte
@@ -376,16 +370,14 @@ func TestSequential_RepeatedLogoutLoginCycles(t *testing.T) {
 			RawDataPayload: compressed,
 		}
 		handleMsgMhfSavedata(session, savePkt)
-		time.Sleep(50 * time.Millisecond)
 
 		// Logout
 		logoutPlayer(session)
-		time.Sleep(50 * time.Millisecond)
 
 		// Verify data after each cycle
 		var savedCompressed []byte
-		db.QueryRow("SELECT savedata FROM characters WHERE id = $1", charID).Scan(&savedCompressed)
-		
+		_ = db.QueryRow("SELECT savedata FROM characters WHERE id = $1", charID).Scan(&savedCompressed)
+
 		if len(savedCompressed) > 0 {
 			decompressed, err := nullcomp.Decompress(savedCompressed)
 			if err != nil {
@@ -393,7 +385,7 @@ func TestSequential_RepeatedLogoutLoginCycles(t *testing.T) {
 			} else if len(decompressed) > 7001 {
 				savedCycle := (int(decompressed[7000]) << 8) | int(decompressed[7001])
 				if savedCycle != cycle {
-					t.Errorf("Cycle %d: ❌ Data corruption - expected cycle %d, got %d", 
+					t.Errorf("Cycle %d: ❌ Data corruption - expected cycle %d, got %d",
 						cycle, cycle, savedCycle)
 				} else {
 					t.Logf("Cycle %d: ✓ Data correct", cycle)
@@ -431,7 +423,7 @@ func TestRealtime_SaveDataTimestamps(t *testing.T) {
 	saveData := make([]byte, 150000)
 	copy(saveData[88:], []byte("TimestampChar\x00"))
 	compressed, _ := nullcomp.Compress(saveData)
-	
+
 	savePkt := &mhfpacket.MsgMhfSavedata{
 		SaveType:       0,
 		AckHandle:      11001,
@@ -452,7 +444,6 @@ func TestRealtime_SaveDataTimestamps(t *testing.T) {
 	events = append(events, SaveEvent{time.Now(), "logout_start"})
 	logoutPlayer(session)
 	events = append(events, SaveEvent{time.Now(), "logout_end"})
-	time.Sleep(50 * time.Millisecond)
 
 	// Print timeline
 	t.Log("Save event timeline:")
@@ -477,7 +468,7 @@ func TestRealtime_SaveDataTimestamps(t *testing.T) {
 	if !lastSaveTime.IsZero() && !logoutTime.IsZero() {
 		gap := logoutTime.Sub(lastSaveTime)
 		t.Logf("Time between last save and logout: %v", gap.Round(time.Millisecond))
-		
+
 		if gap > 50*time.Millisecond {
 			t.Log("⚠️  Significant gap between last save and logout")
 			t.Log("Player changes after last save would be LOST")
@@ -498,4 +489,3 @@ func containsAny(s string, substrs []string) bool {
 	}
 	return false
 }
-
