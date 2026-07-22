@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `handleMsgMhfGetUdGuildMapInfo`/`handleMsgMhfGenerateUdGuildMap` (guild interception map generation and retrieval for Diva Defense) — both were unconditional-fail stubs. Adds the procedural map generator and repository layer (`GuildRepo.GetInterceptionMaps`/`SaveInterceptionMaps`, backed by the `guilds.interception_maps` column provisioned by migration `0017_diva.sql`) on top of the packet layer authored by wish on the community `feature/diva` branch — preserved as tag `feature-diva-tip` / branch `archive/feature-diva`. Diva Defense design and contributions by wish, stratic-dev, Samboge, Re-Nest, and Houmgaor.
 
+### Fixed
+
+- `handleMsgMhfSetUdTacticsFollower` had an empty body that sent no ACK at all (guaranteed client softlock for that packet), and its packet's `Parse()` unconditionally returned an error so the handler was never even reached. Implemented `Parse()` (AckHandle + 4 unknown uint16 fields) and a simple-succeed ACK.
+
 ### Removed
 
 - `stable/v9.2.x` branch and its `SECURITY.md` supported-version entry — the branch had been untouched since 2026-02-08 and 9.2.x is well past the current 9.4.x release line.
