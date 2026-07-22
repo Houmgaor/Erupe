@@ -65,13 +65,17 @@ func (s *APIServer) Start() error {
 	r.HandleFunc("/dashboard", s.Dashboard)
 	r.HandleFunc("/api/dashboard/stats", s.DashboardStatsJSON).Methods("GET")
 
-	// Legacy routes (unchanged, no method enforcement)
+	// Legacy routes. The auth/mutation endpoints below decode a JSON request
+	// body, so they must be POST-only: without method enforcement, bare GET
+	// probes from internet scanners reach the handler and fail body decoding,
+	// producing needless error-level log noise. The v2 equivalents already
+	// enforce methods; these now match.
 	r.HandleFunc("/launcher", s.Launcher)
-	r.HandleFunc("/login", s.Login)
-	r.HandleFunc("/register", s.Register)
-	r.HandleFunc("/character/create", s.CreateCharacter)
-	r.HandleFunc("/character/delete", s.DeleteCharacter)
-	r.HandleFunc("/character/export", s.ExportSave)
+	r.HandleFunc("/login", s.Login).Methods("POST")
+	r.HandleFunc("/register", s.Register).Methods("POST")
+	r.HandleFunc("/character/create", s.CreateCharacter).Methods("POST")
+	r.HandleFunc("/character/delete", s.DeleteCharacter).Methods("POST")
+	r.HandleFunc("/character/export", s.ExportSave).Methods("POST")
 	r.HandleFunc("/api/ss/bbs/upload.php", s.ScreenShot)
 	r.HandleFunc("/api/ss/bbs/{id}", s.ScreenShotGet)
 	r.HandleFunc("/", s.LandingPage)

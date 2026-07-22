@@ -277,8 +277,16 @@ func (s *Session) recvLoop() {
 			logoutPlayer(s)
 			return
 		} else if err != nil {
-			// Connection error - network issue or malformed packet
-			s.logger.Warn("Connection error, exiting recv loop",
+			// Connection error - network issue, client reset, or pre-auth probe.
+			// A pre-auth connection (charID == 0) is almost always a port scanner
+			// or half-open probe on the channel port; a reset/EOF from an
+			// authenticated player is a routine network drop. Neither is a server
+			// fault, so log below WARN to keep genuine problems visible.
+			logFn := s.logger.Info
+			if s.charID == 0 {
+				logFn = s.logger.Debug
+			}
+			logFn("Connection error, exiting recv loop",
 				zap.Error(err),
 				zap.Uint32("charID", s.charID),
 				zap.String("name", s.Name),

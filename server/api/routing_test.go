@@ -17,13 +17,13 @@ import (
 func newTestRouter(s *APIServer) *mux.Router {
 	r := mux.NewRouter()
 
-	// Legacy routes
+	// Legacy routes (mirrors Start(): auth/mutation endpoints are POST-only)
 	r.HandleFunc("/launcher", s.Launcher)
-	r.HandleFunc("/login", s.Login)
-	r.HandleFunc("/register", s.Register)
-	r.HandleFunc("/character/create", s.CreateCharacter)
-	r.HandleFunc("/character/delete", s.DeleteCharacter)
-	r.HandleFunc("/character/export", s.ExportSave)
+	r.HandleFunc("/login", s.Login).Methods("POST")
+	r.HandleFunc("/register", s.Register).Methods("POST")
+	r.HandleFunc("/character/create", s.CreateCharacter).Methods("POST")
+	r.HandleFunc("/character/delete", s.DeleteCharacter).Methods("POST")
+	r.HandleFunc("/character/export", s.ExportSave).Methods("POST")
 	r.HandleFunc("/health", s.Health)
 	r.HandleFunc("/version", s.Version)
 
@@ -492,6 +492,26 @@ func TestV2CreateCharacter_DebugHR(t *testing.T) {
 	}
 	if char.HR != 7 {
 		t.Errorf("HR = %d, want 7 (capped by MaxLauncherHR)", char.HR)
+	}
+}
+
+func TestLegacyLoginRejectsGET(t *testing.T) {
+	logger := NewTestLogger(t)
+	server := &APIServer{
+		logger:      logger,
+		erupeConfig: NewTestConfig(),
+	}
+
+	router := newTestRouter(server)
+
+	// A bare GET probe (empty body) must be rejected by the router with 405
+	// before reaching the handler — not decoded and logged as a server error.
+	req := httptest.NewRequest("GET", "/login", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET /login (legacy): status = %d, want 405", rec.Code)
 	}
 }
 
