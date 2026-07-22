@@ -141,17 +141,24 @@ h1{font-size:1.75rem;margin-bottom:.5rem;color:#e94560;text-align:center}
 <!-- Step 3: Quest Files Check -->
 <div class="card step hidden" id="step-3">
   <h2>Quest Files</h2>
-  <p style="font-size:.85rem;color:#888;margin-bottom:1rem">Quest files are needed for gameplay. The server checks the <code>bin/quests/</code> directory.</p>
+  <p style="font-size:.85rem;color:#888;margin-bottom:1rem" id="quest-dir-hint">Quest files are needed for gameplay. The server checks the <code>game-data/quests/</code> directory (or <code>bin/quests/</code> if you're upgrading an existing install).</p>
   <div id="quest-status" class="status status-info">Checking quest files...</div>
   <div id="quest-warning" class="hidden" style="margin-top:1rem">
     <p style="font-size:.85rem;color:#e94560;margin-bottom:.7rem"><strong>No quest files found.</strong></p>
-    <p style="font-size:.85rem;color:#aaa;margin-bottom:.5rem">Download the quest archive:</p>
+    <p style="font-size:.85rem;color:#aaa;margin-bottom:.5rem">Sync from a manifest URL, or download the quest archive manually:</p>
     <a href="https://files.catbox.moe/xf0l7w.7z" target="_blank" rel="noopener" style="color:#4ecdc4;font-size:.9rem;word-break:break-all">https://files.catbox.moe/xf0l7w.7z</a>
-    <p style="font-size:.85rem;color:#aaa;margin-top:.7rem">Download the archive, extract it, and place the <code>quests/</code> and <code>scenarios/</code> folders into the <code>bin/</code> directory next to the server binary.</p>
+    <p style="font-size:.85rem;color:#aaa;margin-top:.7rem">Download the archive, extract it, and place the <code>quests/</code> and <code>scenarios/</code> folders into a <code>game-data/</code> directory next to the server binary (an existing <code>bin/</code> directory from an older install also still works).</p>
   </div>
   <div style="margin-top:1rem">
+    <label style="font-size:.85rem;color:#aaa;display:block;margin-bottom:.3rem">Manifest URL</label>
+    <input type="text" id="sync-manifest-url" placeholder="https://your-data-host.example/erupe/manifest.json" style="width:100%;margin-bottom:.3rem">
+    <p style="font-size:.75rem;color:#666;margin-bottom:.7rem">Erupe doesn't bundle or default to any particular host — enter the manifest URL your community uses (e.g. Mogapedia's, another community's, or one you host yourself; see <code>docs/binsync-format.md</code>).</p>
+    <button class="btn btn-secondary" id="btn-sync-quests" onclick="syncQuests()">Sync Now</button>
     <button class="btn btn-secondary" id="btn-recheck-quests" onclick="checkQuests()">Re-check</button>
   </div>
+  <div id="sync-log" class="log hidden" style="margin-top:1rem"></div>
+  <div id="sync-status" class="status hidden" style="margin-top:.7rem"></div>
+  <p id="sync-restart-note" class="hidden" style="font-size:.8rem;color:#e9a94a;margin-top:.5rem">Hunting Road (rengoku) changes only take effect after a server restart. Quest/scenario changes apply immediately.</p>
   <div class="actions">
     <button class="btn btn-secondary" onclick="goToStep(2)">Back</button>
     <button class="btn btn-primary" id="btn-step3-next" onclick="goToStep(4)">Next</button>
@@ -390,13 +397,17 @@ async function checkQuests() {
   try {
     const res = await fetch('/api/setup/check-quests');
     const data = await res.json();
+    if (data.dir) {
+      document.getElementById('quest-dir-hint').innerHTML =
+        'Quest files are needed for gameplay. The server is checking the <code>' + data.dir + '/quests/</code> directory.';
+    }
     if (data.questsFound) {
       status.className = 'status status-ok';
       status.textContent = data.questCount + ' quest file' + (data.questCount !== 1 ? 's' : '') + ' found.';
       warning.classList.add('hidden');
     } else {
       status.className = 'status status-warn';
-      status.textContent = 'No quest files found in bin/quests/.';
+      status.textContent = 'No quest files found in ' + (data.dir || 'game-data') + '/quests/.';
       warning.classList.remove('hidden');
     }
   } catch (e) {
@@ -406,6 +417,61 @@ async function checkQuests() {
   }
   btn.disabled = false;
   btn.textContent = 'Re-check';
+}
+
+async function syncQuests() {
+  const btn = document.getElementById('btn-sync-quests');
+  const logEl = document.getElementById('sync-log');
+  const status = document.getElementById('sync-status');
+  const manifestURL = document.getElementById('sync-manifest-url').value.trim();
+  if (!manifestURL) {
+    status.className = 'status status-warn';
+    status.textContent = 'Enter a manifest URL first.';
+    status.classList.remove('hidden');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Syncing...';
+  logEl.classList.remove('hidden');
+  logEl.innerHTML = '';
+  status.classList.add('hidden');
+
+  try {
+    const res = await fetch('/api/setup/sync-quests', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({manifestURL: manifestURL})
+    });
+    const data = await res.json();
+    if (data.log) {
+      data.log.forEach(line => {
+        const div = document.createElement('div');
+        div.className = 'log-line';
+        if (line.startsWith('  FAILED') || line.startsWith('ERROR')) div.classList.add('error');
+        if (line.startsWith('Done:')) div.classList.add('success');
+        div.textContent = line;
+        logEl.appendChild(div);
+      });
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    if (data.success) {
+      status.className = 'status status-ok';
+      status.textContent = 'Sync complete!';
+      document.getElementById('sync-restart-note').classList.remove('hidden');
+    } else {
+      status.className = 'status status-warn';
+      status.textContent = 'Sync finished with errors. Check the log above.';
+    }
+    status.classList.remove('hidden');
+    checkQuests();
+  } catch (e) {
+    status.className = 'status status-warn';
+    status.textContent = 'Request failed: ' + e.message;
+    status.classList.remove('hidden');
+  }
+  btn.disabled = false;
+  btn.textContent = 'Sync Now';
 }
 
 let presetsLoaded = false;

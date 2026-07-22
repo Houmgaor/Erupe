@@ -201,7 +201,7 @@ func (s *APIServer) Login(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqData); err != nil {
-		s.logger.Error("JSON decode error", zap.Error(err))
+		s.logger.Debug("Malformed request body", zap.Error(err))
 		writeError(w, http.StatusBadRequest, "invalid_request", "Malformed request body")
 		return
 	}
@@ -248,7 +248,7 @@ func (s *APIServer) Register(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqData); err != nil {
-		s.logger.Error("JSON decode error", zap.Error(err))
+		s.logger.Debug("Malformed request body", zap.Error(err))
 		writeError(w, http.StatusBadRequest, "invalid_request", "Malformed request body")
 		return
 	}
@@ -291,7 +291,7 @@ func (s *APIServer) CreateCharacter(w http.ResponseWriter, r *http.Request) {
 			Token string `json:"token"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&reqData); err != nil {
-			s.logger.Error("JSON decode error", zap.Error(err))
+			s.logger.Debug("Malformed request body", zap.Error(err))
 			writeError(w, http.StatusBadRequest, "invalid_request", "Malformed request body")
 			return
 		}
@@ -337,7 +337,7 @@ func (s *APIServer) DeleteCharacter(w http.ResponseWriter, r *http.Request) {
 			CharID uint32 `json:"charId"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&reqData); err != nil {
-			s.logger.Error("JSON decode error", zap.Error(err))
+			s.logger.Debug("Malformed request body", zap.Error(err))
 			writeError(w, http.StatusBadRequest, "invalid_request", "Malformed request body")
 			return
 		}
@@ -380,7 +380,7 @@ func (s *APIServer) ExportSave(w http.ResponseWriter, r *http.Request) {
 			CharID uint32 `json:"charId"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&reqData); err != nil {
-			s.logger.Error("JSON decode error", zap.Error(err))
+			s.logger.Debug("Malformed request body", zap.Error(err))
 			writeError(w, http.StatusBadRequest, "invalid_request", "Malformed request body")
 			return
 		}
