@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"erupe-ce/common/stringsupport"
-	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -28,19 +27,20 @@ const (
 // Session holds state for the sign server connection.
 type Session struct {
 	sync.Mutex
-	logger    *zap.Logger
-	server    *Server
-	rawConn   net.Conn
-	cryptConn *network.CryptConn
-	client    client
-	psn       string
+	logger         *zap.Logger
+	server         *Server
+	rawConn        net.Conn
+	cryptConn      network.Conn
+	client         client
+	psn            string
+	captureCleanup func()
 }
 
 func (s *Session) work() {
 	pkt, err := s.cryptConn.ReadPacket()
 
 	if s.server.erupeConfig.DebugOptions.LogInboundMessages {
-		fmt.Printf("\n[Client] -> [Server]\nData [%d bytes]:\n%s\n", len(pkt), hex.Dump(pkt))
+		s.logger.Debug("Inbound packet", zap.Int("bytes", len(pkt)), zap.String("data", hex.Dump(pkt)))
 	}
 
 	if err != nil {
@@ -79,12 +79,12 @@ func (s *Session) handlePacket(pkt []byte) error {
 		err := s.server.deleteCharacter(characterID, token, tokenID)
 		if err == nil {
 			s.logger.Info("Deleted character", zap.Int("CharacterID", characterID))
-			s.cryptConn.SendPacket([]byte{0x01}) // DEL_SUCCESS
+			_ = s.cryptConn.SendPacket([]byte{0x01}) // DEL_SUCCESS
 		}
 	default:
 		s.logger.Warn("Unknown request", zap.String("reqType", reqType))
 		if s.server.erupeConfig.DebugOptions.LogInboundMessages {
-			fmt.Printf("\n[Client] -> [Server]\nData [%d bytes]:\n%s\n", len(pkt), hex.Dump(pkt))
+			s.logger.Debug("Unknown inbound packet", zap.Int("bytes", len(pkt)), zap.String("data", hex.Dump(pkt)))
 		}
 	}
 	return nil
@@ -108,7 +108,7 @@ func (s *Session) authenticate(username string, password string) {
 		bf.WriteUint8(uint8(resp))
 	}
 	if s.server.erupeConfig.DebugOptions.LogOutboundMessages {
-		fmt.Printf("\n[Server] -> [Client]\nData [%d bytes]:\n%s\n", len(bf.Data()), hex.Dump(bf.Data()))
+		s.logger.Debug("Outbound packet", zap.Int("bytes", len(bf.Data())), zap.String("data", hex.Dump(bf.Data())))
 	}
 	_ = s.cryptConn.SendPacket(bf.Data())
 }
@@ -116,8 +116,7 @@ func (s *Session) authenticate(username string, password string) {
 func (s *Session) handleWIIUSGN(bf *byteframe.ByteFrame) {
 	_ = bf.ReadBytes(1)
 	wiiuKey := string(bf.ReadBytes(64))
-	var uid uint32
-	err := s.server.db.QueryRow(`SELECT id FROM users WHERE wiiu_key = $1`, wiiuKey).Scan(&uid)
+	uid, err := s.server.userRepo.GetByWiiUKey(wiiuKey)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			s.logger.Info("Unlinked Wii U attempted to authenticate", zap.String("Key", wiiuKey))
@@ -127,7 +126,7 @@ func (s *Session) handleWIIUSGN(bf *byteframe.ByteFrame) {
 		s.sendCode(SIGN_EABORT)
 		return
 	}
-	s.cryptConn.SendPacket(s.makeSignResponse(uid))
+	_ = s.cryptConn.SendPacket(s.makeSignResponse(uid))
 }
 
 func (s *Session) handlePSSGN(bf *byteframe.ByteFrame) {
@@ -143,35 +142,33 @@ func (s *Session) handlePSSGN(bf *byteframe.ByteFrame) {
 		_ = bf.ReadBytes(82)
 	}
 	s.psn = string(bf.ReadNullTerminatedBytes())
-	var uid uint32
-	err := s.server.db.QueryRow(`SELECT id FROM users WHERE psn_id = $1`, s.psn).Scan(&uid)
+	uid, err := s.server.userRepo.GetByPSNID(s.psn)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			s.cryptConn.SendPacket(s.makeSignResponse(0))
+			_ = s.cryptConn.SendPacket(s.makeSignResponse(0))
 			return
 		}
 		s.sendCode(SIGN_EABORT)
 		return
 	}
-	s.cryptConn.SendPacket(s.makeSignResponse(uid))
+	_ = s.cryptConn.SendPacket(s.makeSignResponse(uid))
 }
 
 func (s *Session) handlePSNLink(bf *byteframe.ByteFrame) {
 	_ = bf.ReadNullTerminatedBytes() // Client ID
-	credentials := strings.Split(stringsupport.SJISToUTF8(bf.ReadNullTerminatedBytes()), "\n")
-	token := string(bf.ReadNullTerminatedBytes())
+	credStr := stringsupport.SJISToUTF8Lossy(bf.ReadNullTerminatedBytes())
+	credentials := strings.Split(credStr, "\n")
+	tok := string(bf.ReadNullTerminatedBytes())
 	uid, resp := s.server.validateLogin(credentials[0], credentials[1])
 	if resp == SIGN_SUCCESS && uid > 0 {
-		var psn string
-		err := s.server.db.QueryRow(`SELECT psn_id FROM sign_sessions WHERE token = $1`, token).Scan(&psn)
+		psn, err := s.server.sessionRepo.GetPSNIDByToken(tok)
 		if err != nil {
 			s.sendCode(SIGN_ECOGLINK)
 			return
 		}
 
 		// Since we check for the psn_id, this will never run
-		var exists int
-		err = s.server.db.QueryRow(`SELECT count(*) FROM users WHERE psn_id = $1`, psn).Scan(&exists)
+		exists, err := s.server.userRepo.CountByPSNID(psn)
 		if err != nil {
 			s.sendCode(SIGN_ECOGLINK)
 			return
@@ -180,8 +177,7 @@ func (s *Session) handlePSNLink(bf *byteframe.ByteFrame) {
 			return
 		}
 
-		var currentPSN string
-		err = s.server.db.QueryRow(`SELECT COALESCE(psn_id, '') FROM users WHERE username = $1`, credentials[0]).Scan(&currentPSN)
+		currentPSN, err := s.server.userRepo.GetPSNIDForUsername(credentials[0])
 		if err != nil {
 			s.sendCode(SIGN_ECOGLINK)
 			return
@@ -190,7 +186,7 @@ func (s *Session) handlePSNLink(bf *byteframe.ByteFrame) {
 			return
 		}
 
-		_, err = s.server.db.Exec(`UPDATE users SET psn_id = $1 WHERE username = $2`, psn, credentials[0])
+		err = s.server.userRepo.SetPSNID(credentials[0], psn)
 		if err == nil {
 			s.sendCode(SIGN_SUCCESS)
 			return
@@ -200,12 +196,12 @@ func (s *Session) handlePSNLink(bf *byteframe.ByteFrame) {
 }
 
 func (s *Session) handleDSGN(bf *byteframe.ByteFrame) {
-	user := stringsupport.SJISToUTF8(bf.ReadNullTerminatedBytes())
-	pass := stringsupport.SJISToUTF8(bf.ReadNullTerminatedBytes())
+	user := stringsupport.SJISToUTF8Lossy(bf.ReadNullTerminatedBytes())
+	pass := stringsupport.SJISToUTF8Lossy(bf.ReadNullTerminatedBytes())
 	_ = string(bf.ReadNullTerminatedBytes()) // Unk
 	s.authenticate(user, pass)
 }
 
 func (s *Session) sendCode(id RespID) {
-	s.cryptConn.SendPacket([]byte{byte(id)})
+	_ = s.cryptConn.SendPacket([]byte{byte(id)})
 }

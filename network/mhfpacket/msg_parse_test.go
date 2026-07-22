@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"erupe-ce/common/byteframe"
+	cfg "erupe-ce/config"
 	"erupe-ce/network/clientctx"
 )
 
@@ -14,10 +15,10 @@ func TestMsgMhfGetAchievementDetailedParse(t *testing.T) {
 	bf.WriteUint32(0x12345678) // AckHandle
 	bf.WriteUint32(54321)      // CharID
 	bf.WriteUint32(99999)      // Unk1
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfGetAchievement{}
-	err := pkt.Parse(bf, &clientctx.ClientContext{})
+	err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -36,10 +37,10 @@ func TestMsgMhfAddAchievementDetailedParse(t *testing.T) {
 	bf.WriteUint8(42)      // AchievementID
 	bf.WriteUint16(12345)  // Unk1
 	bf.WriteUint16(0xFFFF) // Unk2 - max value
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfAddAchievement{}
-	err := pkt.Parse(bf, &clientctx.ClientContext{})
+	err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -78,10 +79,10 @@ func TestMsgSysCastBinaryDetailedParse(t *testing.T) {
 			bf.WriteUint8(tt.messageType)
 			bf.WriteUint16(uint16(len(tt.payload)))
 			bf.WriteBytes(tt.payload)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgSysCastBinary{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -116,16 +117,16 @@ func TestMsgSysLogoutDetailedParse(t *testing.T) {
 	for _, tt := range tests {
 		bf := byteframe.NewByteFrame()
 		bf.WriteUint8(tt.unk0)
-		bf.Seek(0, io.SeekStart)
+		_, _ = bf.Seek(0, io.SeekStart)
 
 		pkt := &MsgSysLogout{}
-		err := pkt.Parse(bf, &clientctx.ClientContext{})
+		err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
 
-		if pkt.Unk0 != tt.unk0 {
-			t.Errorf("Unk0 = %d, want %d", pkt.Unk0, tt.unk0)
+		if pkt.LogoutType != tt.unk0 {
+			t.Errorf("Unk0 = %d, want %d", pkt.LogoutType, tt.unk0)
 		}
 	}
 }
@@ -144,10 +145,10 @@ func TestMsgSysBackStageDetailedParse(t *testing.T) {
 	for _, tt := range tests {
 		bf := byteframe.NewByteFrame()
 		bf.WriteUint32(tt.ackHandle)
-		bf.Seek(0, io.SeekStart)
+		_, _ = bf.Seek(0, io.SeekStart)
 
 		pkt := &MsgSysBackStage{}
-		err := pkt.Parse(bf, &clientctx.ClientContext{})
+		err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -171,10 +172,10 @@ func TestMsgSysPingDetailedParse(t *testing.T) {
 	for _, tt := range tests {
 		bf := byteframe.NewByteFrame()
 		bf.WriteUint32(tt.ackHandle)
-		bf.Seek(0, io.SeekStart)
+		_, _ = bf.Seek(0, io.SeekStart)
 
 		pkt := &MsgSysPing{}
-		err := pkt.Parse(bf, &clientctx.ClientContext{})
+		err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -200,10 +201,10 @@ func TestMsgSysTimeDetailedParse(t *testing.T) {
 		bf := byteframe.NewByteFrame()
 		bf.WriteBool(tt.getRemoteTime)
 		bf.WriteUint32(tt.timestamp)
-		bf.Seek(0, io.SeekStart)
+		_, _ = bf.Seek(0, io.SeekStart)
 
 		pkt := &MsgSysTime{}
-		err := pkt.Parse(bf, &clientctx.ClientContext{})
+		err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}

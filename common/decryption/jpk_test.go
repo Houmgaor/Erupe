@@ -73,7 +73,7 @@ func TestUnpackSimple_JPKHeader(t *testing.T) {
 	}
 
 	// Verify the header bytes are correct
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	header := bf.ReadUint32()
 	if header != 0x1A524B4A {
 		t.Errorf("Header = 0x%X, want 0x1A524B4A", header)
@@ -81,21 +81,40 @@ func TestUnpackSimple_JPKHeader(t *testing.T) {
 }
 
 func TestJPKBitShift_Initialization(t *testing.T) {
-	// Test that the function doesn't crash with bad initial global state
-	mShiftIndex = 10
-	mFlag = 0xFF
-
-	// Create data without JPK header (will return as-is)
-	// Need at least 4 bytes since UnpackSimple reads a uint32 header
+	// Test that bitShift correctly initializes from zero state
 	bf := byteframe.NewByteFrame()
-	bf.WriteUint32(0xAABBCCDD) // Not a JPK header
+	bf.WriteUint8(0xFF) // All bits set
+	bf.WriteUint8(0x00) // No bits set
 
-	data := bf.Data()
-	result := UnpackSimple(data)
+	_, _ = bf.Seek(0, io.SeekStart)
+	s := &jpkState{}
 
-	// Without JPK header, should return data as-is
-	if !bytes.Equal(result, data) {
-		t.Error("UnpackSimple with non-JPK data should return input as-is")
+	// First call should read 0xFF as flag and return bit 7 = 1
+	bit := s.bitShift(bf)
+	if bit != 1 {
+		t.Errorf("bitShift() first bit of 0xFF = %d, want 1", bit)
+	}
+}
+
+func TestUnpackSimple_ConcurrentSafety(t *testing.T) {
+	// Verify that concurrent UnpackSimple calls don't race.
+	// Non-JPK data is returned as-is; the important thing is no data race.
+	input := []byte{0x00, 0x01, 0x02, 0x03}
+
+	done := make(chan struct{})
+	for i := 0; i < 8; i++ {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			for j := 0; j < 100; j++ {
+				result := UnpackSimple(input)
+				if !bytes.Equal(result, input) {
+					t.Errorf("concurrent UnpackSimple returned wrong data")
+				}
+			}
+		}()
+	}
+	for i := 0; i < 8; i++ {
+		<-done
 	}
 }
 
@@ -104,7 +123,7 @@ func TestReadByte(t *testing.T) {
 	bf.WriteUint8(0x42)
 	bf.WriteUint8(0xAB)
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	b1 := ReadByte(bf)
 	b2 := ReadByte(bf)
 
@@ -228,7 +247,7 @@ func BenchmarkReadByte(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		bf.Seek(0, io.SeekStart)
+		_, _ = bf.Seek(0, io.SeekStart)
 		_ = ReadByte(bf)
 	}
 }

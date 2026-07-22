@@ -319,4 +319,3 @@ func TestStageBroadcastMHF_EmptyStage(t *testing.T) {
 	// Should not panic with empty stage
 	stage.BroadcastMHF(pkt, nil)
 }
-

@@ -32,7 +32,10 @@ func TestUTF8ToSJIS(t *testing.T) {
 func TestSJISToUTF8(t *testing.T) {
 	// Test ASCII characters (which are the same in SJIS and UTF-8)
 	asciiBytes := []byte("Hello World")
-	result := SJISToUTF8(asciiBytes)
+	result, err := SJISToUTF8(asciiBytes)
+	if err != nil {
+		t.Fatalf("SJISToUTF8() unexpected error: %v", err)
+	}
 	if result != "Hello World" {
 		t.Errorf("SJISToUTF8() = %q, want %q", result, "Hello World")
 	}
@@ -42,7 +45,7 @@ func TestUTF8ToSJIS_RoundTrip(t *testing.T) {
 	// Test round-trip conversion for ASCII
 	original := "Hello World 123"
 	sjis := UTF8ToSJIS(original)
-	back := SJISToUTF8(sjis)
+	back, _ := SJISToUTF8(sjis)
 
 	if back != original {
 		t.Errorf("Round-trip failed: got %q, want %q", back, original)
@@ -51,10 +54,10 @@ func TestUTF8ToSJIS_RoundTrip(t *testing.T) {
 
 func TestToNGWord(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		minLen   int
-		checkFn  func(t *testing.T, result []uint16)
+		name    string
+		input   string
+		minLen  int
+		checkFn func(t *testing.T, result []uint16)
 	}{
 		{
 			name:   "ascii characters",
@@ -325,11 +328,11 @@ func TestCSVGetIndex(t *testing.T) {
 
 func TestCSVSetIndex(t *testing.T) {
 	tests := []struct {
-		name     string
-		csv      string
-		index    int
-		value    int
-		check    func(t *testing.T, result string)
+		name  string
+		csv   string
+		index int
+		value int
+		check func(t *testing.T, result string)
 	}{
 		{
 			name:  "set first",
@@ -458,6 +461,25 @@ func BenchmarkCSVElems(b *testing.B) {
 	}
 }
 
+func TestSJISToUTF8Lossy(t *testing.T) {
+	// Valid SJIS (ASCII subset) decodes correctly.
+	got := SJISToUTF8Lossy([]byte("Hello"))
+	if got != "Hello" {
+		t.Errorf("SJISToUTF8Lossy(valid) = %q, want %q", got, "Hello")
+	}
+
+	// Truncated multi-byte SJIS sequence (lead byte 0x82 without trail byte)
+	// does not panic and returns some result (lossy).
+	got = SJISToUTF8Lossy([]byte{0x82})
+	_ = got // must not panic
+
+	// Nil input returns empty string.
+	got = SJISToUTF8Lossy(nil)
+	if got != "" {
+		t.Errorf("SJISToUTF8Lossy(nil) = %q, want %q", got, "")
+	}
+}
+
 func TestUTF8ToSJIS_UnsupportedCharacters(t *testing.T) {
 	// Regression test for PR #116: Characters outside the Shift-JIS range
 	// (e.g. Lenny face, cuneiform) previously caused a panic in UTF8ToSJIS,
@@ -509,7 +531,7 @@ func TestUTF8ToSJIS_PreservesValidContent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sjis := UTF8ToSJIS(tt.input)
-			roundTripped := SJISToUTF8(sjis)
+			roundTripped, _ := SJISToUTF8(sjis)
 			if roundTripped != tt.expected {
 				t.Errorf("UTF8ToSJIS(%q) round-tripped to %q, want %q", tt.input, roundTripped, tt.expected)
 			}
@@ -544,7 +566,7 @@ func BenchmarkSJISToUTF8(b *testing.B) {
 	text := []byte("Hello World")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = SJISToUTF8(text)
+		_, _ = SJISToUTF8(text)
 	}
 }
 

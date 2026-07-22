@@ -1,9 +1,11 @@
 package mhfpacket
 
 import (
+	"strings"
 	"testing"
 
 	"erupe-ce/common/byteframe"
+	cfg "erupe-ce/config"
 	"erupe-ce/network/clientctx"
 )
 
@@ -245,7 +247,7 @@ func TestBuildCoverage_NotImplemented(t *testing.T) {
 		{"MsgSysReserve1AF", &MsgSysReserve1AF{}},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	bf := byteframe.NewByteFrame()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -260,7 +262,8 @@ func TestBuildCoverage_NotImplemented(t *testing.T) {
 				return
 			}
 			// Build returned an error, which is expected for NOT IMPLEMENTED stubs
-			if err.Error() != "NOT IMPLEMENTED" {
+			errMsg := err.Error()
+			if errMsg != "NOT IMPLEMENTED" && !strings.Contains(errMsg, "not implemented") {
 				t.Errorf("Build() returned unexpected error: %v", err)
 			}
 		})
@@ -282,7 +285,7 @@ func TestParseCoverage_NotImplemented(t *testing.T) {
 		{"MsgMhfUpdateGuild", &MsgMhfUpdateGuild{}},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	bf := byteframe.NewByteFrame()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

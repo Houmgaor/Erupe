@@ -16,13 +16,13 @@ RUN adduser -D -h /app erupe
 WORKDIR /app
 
 COPY --from=builder /build/erupe-ce .
-COPY --from=builder /build/schemas/ ./schemas/
 
-# www/ and bin/ are mounted at runtime if needed
-
-# bin/ and savedata/ are mounted at runtime via docker-compose
-# config.json is also mounted at runtime
+# docker-compose mounts docker/bin/ and docker/savedata/ to /app/bin and
+# /app/savedata respectively; config.json is also mounted at runtime
 
 USER erupe
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
+  CMD wget -qO- http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["./erupe-ce"]

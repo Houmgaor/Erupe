@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"erupe-ce/common/byteframe"
+	cfg "erupe-ce/config"
 	"erupe-ce/network"
 	"erupe-ce/network/clientctx"
 )
@@ -63,7 +64,7 @@ func TestMsgSysPingRoundTrip(t *testing.T) {
 		AckHandle: 0x12345678,
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 
 	// Build
 	bf := byteframe.NewByteFrame()
@@ -73,7 +74,7 @@ func TestMsgSysPingRoundTrip(t *testing.T) {
 	}
 
 	// Parse
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	parsed := &MsgSysPing{}
 	err = parsed.Parse(bf, ctx)
 	if err != nil {
@@ -105,7 +106,7 @@ func TestMsgSysTimeRoundTrip(t *testing.T) {
 				Timestamp:     tt.timestamp,
 			}
 
-			ctx := &clientctx.ClientContext{}
+			ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 
 			// Build
 			bf := byteframe.NewByteFrame()
@@ -115,7 +116,7 @@ func TestMsgSysTimeRoundTrip(t *testing.T) {
 			}
 
 			// Parse
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgSysTime{}
 			err = parsed.Parse(bf, ctx)
 			if err != nil {
@@ -237,9 +238,9 @@ func TestParserInterface(t *testing.T) {
 	var p Parser = &MsgSysPing{}
 	bf := byteframe.NewByteFrame()
 	bf.WriteUint32(123)
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
-	err := p.Parse(bf, &clientctx.ClientContext{})
+	err := p.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 	if err != nil {
 		t.Errorf("Parse() error = %v", err)
 	}
@@ -250,7 +251,7 @@ func TestBuilderInterface(t *testing.T) {
 	var b Builder = &MsgSysPing{AckHandle: 456}
 	bf := byteframe.NewByteFrame()
 
-	err := b.Build(bf, &clientctx.ClientContext{})
+	err := b.Build(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 	if err != nil {
 		t.Errorf("Build() error = %v", err)
 	}
@@ -269,24 +270,21 @@ func TestOpcoderInterface(t *testing.T) {
 	}
 }
 
-func TestClientContextNilSafe(t *testing.T) {
-	// Some packets may need to handle nil ClientContext
+func TestClientContextBuildSafe(t *testing.T) {
 	pkt := &MsgSysPing{AckHandle: 123}
 	bf := byteframe.NewByteFrame()
 
-	// This should not panic even with nil context (implementation dependent)
-	// Note: The actual behavior depends on implementation
-	err := pkt.Build(bf, nil)
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
+	err := pkt.Build(bf, ctx)
 	if err != nil {
-		// Error is acceptable if nil context is not supported
-		t.Logf("Build() with nil context returned error: %v", err)
+		t.Logf("Build() returned error: %v", err)
 	}
 }
 
 func TestMsgSysPingBuildFormat(t *testing.T) {
 	pkt := &MsgSysPing{AckHandle: 0x12345678}
 	bf := byteframe.NewByteFrame()
-	pkt.Build(bf, &clientctx.ClientContext{})
+	_ = pkt.Build(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 
 	data := bf.Data()
 	if len(data) != 4 {
@@ -305,7 +303,7 @@ func TestMsgSysTimeBuildFormat(t *testing.T) {
 		Timestamp:     0xDEADBEEF,
 	}
 	bf := byteframe.NewByteFrame()
-	pkt.Build(bf, &clientctx.ClientContext{})
+	_ = pkt.Build(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 
 	data := bf.Data()
 	if len(data) != 5 {
@@ -464,36 +462,36 @@ func TestMHFSaveLoad(t *testing.T) {
 
 func TestMsgSysCreateStageParse(t *testing.T) {
 	tests := []struct {
-		name        string
-		data        []byte
-		wantHandle  uint32
-		wantUnk0    uint8
-		wantPlayers uint8
-		wantStageID string
+		name           string
+		data           []byte
+		wantHandle     uint32
+		wantCreateType uint8
+		wantPlayers    uint8
+		wantStageID    string
 	}{
 		{
-			name:        "simple stage",
-			data:        append([]byte{0x00, 0x00, 0x00, 0x01, 0x02, 0x04, 0x05}, append([]byte("test"), 0x00)...),
-			wantHandle:  1,
-			wantUnk0:    2,
-			wantPlayers: 4,
-			wantStageID: "test",
+			name:           "simple stage",
+			data:           append([]byte{0x00, 0x00, 0x00, 0x01, 0x02, 0x04, 0x05}, append([]byte("test"), 0x00)...),
+			wantHandle:     1,
+			wantCreateType: 2,
+			wantPlayers:    4,
+			wantStageID:    "test",
 		},
 		{
-			name:        "empty stage ID",
-			data:        []byte{0x12, 0x34, 0x56, 0x78, 0x01, 0x02, 0x00},
-			wantHandle:  0x12345678,
-			wantUnk0:    1,
-			wantPlayers: 2,
-			wantStageID: "",
+			name:           "empty stage ID",
+			data:           []byte{0x12, 0x34, 0x56, 0x78, 0x01, 0x02, 0x00},
+			wantHandle:     0x12345678,
+			wantCreateType: 1,
+			wantPlayers:    2,
+			wantStageID:    "",
 		},
 		{
-			name:        "with null terminator",
-			data:        append([]byte{0x00, 0x00, 0x00, 0x0A, 0x01, 0x01, 0x08}, append([]byte("stage01"), 0x00)...),
-			wantHandle:  10,
-			wantUnk0:    1,
-			wantPlayers: 1,
-			wantStageID: "stage01",
+			name:           "with null terminator",
+			data:           append([]byte{0x00, 0x00, 0x00, 0x0A, 0x01, 0x01, 0x08}, append([]byte("stage01"), 0x00)...),
+			wantHandle:     10,
+			wantCreateType: 1,
+			wantPlayers:    1,
+			wantStageID:    "stage01",
 		},
 	}
 
@@ -501,10 +499,10 @@ func TestMsgSysCreateStageParse(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
 			bf.WriteBytes(tt.data)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgSysCreateStage{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -512,8 +510,8 @@ func TestMsgSysCreateStageParse(t *testing.T) {
 			if pkt.AckHandle != tt.wantHandle {
 				t.Errorf("AckHandle = %d, want %d", pkt.AckHandle, tt.wantHandle)
 			}
-			if pkt.Unk0 != tt.wantUnk0 {
-				t.Errorf("Unk0 = %d, want %d", pkt.Unk0, tt.wantUnk0)
+			if pkt.CreateType != tt.wantCreateType {
+				t.Errorf("CreateType = %d, want %d", pkt.CreateType, tt.wantCreateType)
 			}
 			if pkt.PlayerCount != tt.wantPlayers {
 				t.Errorf("PlayerCount = %d, want %d", pkt.PlayerCount, tt.wantPlayers)
@@ -553,10 +551,10 @@ func TestMsgSysEnterStageParse(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
 			bf.WriteBytes(tt.data)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgSysEnterStage{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -564,8 +562,8 @@ func TestMsgSysEnterStageParse(t *testing.T) {
 			if pkt.AckHandle != tt.wantHandle {
 				t.Errorf("AckHandle = %d, want %d", pkt.AckHandle, tt.wantHandle)
 			}
-			if pkt.Unk != tt.wantUnk {
-				t.Errorf("Unk = %v, want %v", pkt.Unk, tt.wantUnk)
+			if pkt.IsQuest != tt.wantUnk {
+				t.Errorf("Unk = %v, want %v", pkt.IsQuest, tt.wantUnk)
 			}
 			if pkt.StageID != tt.wantStageID {
 				t.Errorf("StageID = %q, want %q", pkt.StageID, tt.wantStageID)
@@ -602,10 +600,10 @@ func TestMsgSysMoveStageParse(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
 			bf.WriteBytes(tt.data)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgSysMoveStage{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -648,10 +646,10 @@ func TestMsgSysLockStageParse(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
 			bf.WriteBytes(tt.data)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgSysLockStage{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -678,7 +676,7 @@ func TestMsgSysUnlockStageRoundTrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := &clientctx.ClientContext{}
+			ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 
 			// Build (returns NOT IMPLEMENTED)
 			original := &MsgSysUnlockStage{}
@@ -691,7 +689,7 @@ func TestMsgSysUnlockStageRoundTrip(t *testing.T) {
 			// Parse should consume a uint16 without error
 			bf = byteframe.NewByteFrame()
 			bf.WriteUint16(tt.unk0)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 			parsed := &MsgSysUnlockStage{}
 			err = parsed.Parse(bf, ctx)
 			if err != nil {
@@ -716,10 +714,10 @@ func TestMsgSysBackStageParse(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
 			bf.WriteBytes(tt.data)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgSysBackStage{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -746,16 +744,16 @@ func TestMsgSysLogoutParse(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
 			bf.WriteBytes(tt.data)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgSysLogout{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
 
-			if pkt.Unk0 != tt.wantUnk0 {
-				t.Errorf("Unk0 = %d, want %d", pkt.Unk0, tt.wantUnk0)
+			if pkt.LogoutType != tt.wantUnk0 {
+				t.Errorf("Unk0 = %d, want %d", pkt.LogoutType, tt.wantUnk0)
 			}
 		})
 	}
@@ -800,10 +798,10 @@ func TestMsgSysLoginParse(t *testing.T) {
 			bf.WriteUint16(tt.hardcodedZero1)
 			bf.WriteUint16(tt.tokenStrLen)
 			bf.WriteBytes(append([]byte(tt.tokenString), 0x00)) // null terminated
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgSysLogin{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}

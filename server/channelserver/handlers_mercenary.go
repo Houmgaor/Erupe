@@ -3,7 +3,7 @@ package channelserver
 import (
 	"erupe-ce/common/byteframe"
 	"erupe-ce/common/stringsupport"
-	_config "erupe-ce/config"
+	cfg "erupe-ce/config"
 	"erupe-ce/network/mhfpacket"
 	"erupe-ce/server/channelserver/compression/deltacomp"
 	"erupe-ce/server/channelserver/compression/nullcomp"
@@ -14,23 +14,12 @@ import (
 
 func handleMsgMhfLoadPartner(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfLoadPartner)
-	var data []byte
-	err := s.server.db.QueryRow("SELECT partner FROM characters WHERE id = $1", s.charID).Scan(&data)
-	if len(data) == 0 {
-		s.logger.Error("Failed to load partner", zap.Error(err))
-		data = make([]byte, 9)
-	}
-	doAckBufSucceed(s, pkt.AckHandle, data)
+	loadCharacterData(s, pkt.AckHandle, "partner", make([]byte, 9))
 }
 
 func handleMsgMhfSavePartner(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSavePartner)
-	dumpSaveData(s, pkt.RawDataPayload, "partner")
-	_, err := s.server.db.Exec("UPDATE characters SET partner=$1 WHERE id=$2", pkt.RawDataPayload, s.charID)
-	if err != nil {
-		s.logger.Error("Failed to save partner", zap.Error(err))
-	}
-	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
+	saveCharacterData(s, pkt.AckHandle, "partner", pkt.RawDataPayload, 65536)
 }
 
 func handleMsgMhfLoadLegendDispatch(s *Session, p mhfpacket.MHFPacket) {
@@ -52,23 +41,28 @@ func handleMsgMhfLoadLegendDispatch(s *Session, p mhfpacket.MHFPacket) {
 	doAckBufSucceed(s, pkt.AckHandle, bf.Data())
 }
 
+// Hunter Navi buffer sizes per game version
+const (
+	hunterNaviSizeG8 = 552 // G8+ navi buffer size
+	hunterNaviSizeG7 = 280 // G7 and older navi buffer size
+)
+
 func handleMsgMhfLoadHunterNavi(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfLoadHunterNavi)
-	naviLength := 552
-	if s.server.erupeConfig.RealClientMode <= _config.G7 {
-		naviLength = 280
+	naviLength := hunterNaviSizeG8
+	if s.server.erupeConfig.RealClientMode <= cfg.G7 {
+		naviLength = hunterNaviSizeG7
 	}
-	var data []byte
-	err := s.server.db.QueryRow("SELECT hunternavi FROM characters WHERE id = $1", s.charID).Scan(&data)
-	if len(data) == 0 {
-		s.logger.Error("Failed to load hunternavi", zap.Error(err))
-		data = make([]byte, naviLength)
-	}
-	doAckBufSucceed(s, pkt.AckHandle, data)
+	loadCharacterData(s, pkt.AckHandle, "hunternavi", make([]byte, naviLength))
 }
 
 func handleMsgMhfSaveHunterNavi(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSaveHunterNavi)
+	if len(pkt.RawDataPayload) > 4096 {
+		s.logger.Warn("HunterNavi payload too large", zap.Int("len", len(pkt.RawDataPayload)))
+		doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
+		return
+	}
 	saveStart := time.Now()
 
 	s.logger.Debug("Hunter Navi save request",
@@ -79,13 +73,12 @@ func handleMsgMhfSaveHunterNavi(s *Session, p mhfpacket.MHFPacket) {
 
 	var dataSize int
 	if pkt.IsDataDiff {
-		naviLength := 552
-		if s.server.erupeConfig.RealClientMode <= _config.G7 {
-			naviLength = 280
+		naviLength := hunterNaviSizeG8
+		if s.server.erupeConfig.RealClientMode <= cfg.G7 {
+			naviLength = hunterNaviSizeG7
 		}
-		var data []byte
 		// Load existing save
-		err := s.server.db.QueryRow("SELECT hunternavi FROM characters WHERE id = $1", s.charID).Scan(&data)
+		data, err := s.server.charRepo.LoadColumn(s.charID, "hunternavi")
 		if err != nil {
 			s.logger.Error("Failed to load hunternavi",
 				zap.Error(err),
@@ -108,7 +101,7 @@ func handleMsgMhfSaveHunterNavi(s *Session, p mhfpacket.MHFPacket) {
 		saveOutput := deltacomp.ApplyDataDiff(pkt.RawDataPayload, data)
 		dataSize = len(saveOutput)
 
-		_, err = s.server.db.Exec("UPDATE characters SET hunternavi=$1 WHERE id=$2", saveOutput, s.charID)
+		err = s.server.charRepo.SaveColumn(s.charID, "hunternavi", saveOutput)
 		if err != nil {
 			s.logger.Error("Failed to save hunternavi",
 				zap.Error(err),
@@ -123,7 +116,7 @@ func handleMsgMhfSaveHunterNavi(s *Session, p mhfpacket.MHFPacket) {
 		dataSize = len(pkt.RawDataPayload)
 
 		// simply update database, no extra processing
-		_, err := s.server.db.Exec("UPDATE characters SET hunternavi=$1 WHERE id=$2", pkt.RawDataPayload, s.charID)
+		err := s.server.charRepo.SaveColumn(s.charID, "hunternavi", pkt.RawDataPayload)
 		if err != nil {
 			s.logger.Error("Failed to save hunternavi",
 				zap.Error(err),
@@ -148,7 +141,7 @@ func handleMsgMhfSaveHunterNavi(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfMercenaryHuntdata(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfMercenaryHuntdata)
-	if pkt.Unk0 == 1 {
+	if pkt.RequestType == 1 {
 		// Format:
 		// uint8 Hunts
 		// struct Hunt
@@ -175,22 +168,44 @@ func handleMsgMhfEnumerateMercenaryLog(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfCreateMercenary(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfCreateMercenary)
+	nextID, err := s.server.mercenaryRepo.NextRastaID()
+	if err != nil {
+		s.logger.Error("Failed to get next rasta ID", zap.Error(err))
+		doAckSimpleFail(s, pkt.AckHandle, nil)
+		return
+	}
+	if err := s.server.charRepo.SaveInt(s.charID, "rasta_id", int(nextID)); err != nil {
+		s.logger.Error("Failed to set rasta ID", zap.Error(err))
+		doAckSimpleFail(s, pkt.AckHandle, nil)
+		return
+	}
 	bf := byteframe.NewByteFrame()
-	var nextID uint32
-	_ = s.server.db.QueryRow("SELECT nextval('rasta_id_seq')").Scan(&nextID)
-	s.server.db.Exec("UPDATE characters SET rasta_id=$1 WHERE id=$2", nextID, s.charID)
 	bf.WriteUint32(nextID)
 	doAckSimpleSucceed(s, pkt.AckHandle, bf.Data())
 }
 
 func handleMsgMhfSaveMercenary(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSaveMercenary)
-	dumpSaveData(s, pkt.MercData, "mercenary")
-	if len(pkt.MercData) > 0 {
-		temp := byteframe.NewByteFrameFromBytes(pkt.MercData)
-		s.server.db.Exec("UPDATE characters SET savemercenary=$1, rasta_id=$2 WHERE id=$3", pkt.MercData, temp.ReadUint32(), s.charID)
+	if len(pkt.MercData) > 65536 {
+		s.logger.Warn("Mercenary payload too large", zap.Int("len", len(pkt.MercData)))
+		doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
+		return
 	}
-	s.server.db.Exec("UPDATE characters SET gcp=$1, pact_id=$2 WHERE id=$3", pkt.GCP, pkt.PactMercID, s.charID)
+	dumpSaveData(s, pkt.MercData, "mercenary")
+	if len(pkt.MercData) >= 4 {
+		temp := byteframe.NewByteFrameFromBytes(pkt.MercData)
+		rastaID := temp.ReadUint32()
+		if rastaID == 0 {
+			s.logger.Warn("Mercenary save with rasta_id=0, preserving existing value",
+				zap.Uint32("charID", s.charID))
+		}
+		if err := s.server.charRepo.SaveMercenary(s.charID, pkt.MercData, rastaID); err != nil {
+			s.logger.Error("Failed to save mercenary data", zap.Error(err))
+		}
+	}
+	if err := s.server.charRepo.UpdateGCPAndPact(s.charID, pkt.GCP, pkt.PactMercID); err != nil {
+		s.logger.Error("Failed to update GCP and pact ID", zap.Error(err))
+	}
 	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
@@ -198,13 +213,20 @@ func handleMsgMhfReadMercenaryW(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfReadMercenaryW)
 	bf := byteframe.NewByteFrame()
 
-	var pactID, cid uint32
+	pactID, pactErr := readCharacterInt(s, "pact_id")
+	if pactErr != nil {
+		s.logger.Warn("Failed to read pact_id", zap.Error(pactErr))
+	}
+	var cid uint32
 	var name string
-	s.server.db.QueryRow("SELECT pact_id FROM characters WHERE id=$1", s.charID).Scan(&pactID)
 	if pactID > 0 {
-		s.server.db.QueryRow("SELECT name, id FROM characters WHERE rasta_id = $1", pactID).Scan(&name, &cid)
+		var findErr error
+		cid, name, findErr = s.server.charRepo.FindByRastaID(pactID)
+		if findErr != nil {
+			s.logger.Warn("Failed to find character by rasta ID", zap.Error(findErr))
+		}
 		bf.WriteUint8(1) // numLends
-		bf.WriteUint32(pactID)
+		bf.WriteUint32(uint32(pactID))
 		bf.WriteUint32(cid)
 		bf.WriteBool(true) // Escort enabled
 		bf.WriteUint32(uint32(TimeAdjusted().Unix()))
@@ -215,29 +237,28 @@ func handleMsgMhfReadMercenaryW(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	if pkt.Op != 2 && pkt.Op != 5 {
-		var loans uint8
-		temp := byteframe.NewByteFrame()
-		rows, _ := s.server.db.Query("SELECT name, id, pact_id FROM characters WHERE pact_id=(SELECT rasta_id FROM characters WHERE id=$1)", s.charID)
-		for rows.Next() {
-			err := rows.Scan(&name, &cid, &pactID)
-			if err != nil {
-				continue
-			}
-			loans++
-			temp.WriteUint32(pactID)
-			temp.WriteUint32(cid)
-			temp.WriteUint32(uint32(TimeAdjusted().Unix()))
-			temp.WriteUint32(uint32(TimeAdjusted().Add(time.Hour * 24 * 7).Unix()))
-			temp.WriteBytes(stringsupport.PaddedString(name, 18, true))
+		loans, err := s.server.mercenaryRepo.GetMercenaryLoans(s.charID)
+		if err != nil {
+			s.logger.Error("Failed to query mercenary loans", zap.Error(err))
 		}
-		bf.WriteUint8(loans)
-		bf.WriteBytes(temp.Data())
+		bf.WriteUint8(uint8(len(loans)))
+		for _, loan := range loans {
+			bf.WriteUint32(uint32(loan.PactID))
+			bf.WriteUint32(loan.CharID)
+			bf.WriteUint32(uint32(TimeAdjusted().Unix()))
+			bf.WriteUint32(uint32(TimeAdjusted().Add(time.Hour * 24 * 7).Unix()))
+			bf.WriteBytes(stringsupport.PaddedString(loan.Name, 18, true))
+		}
 
 		if pkt.Op != 1 && pkt.Op != 4 {
-			var data []byte
-			var gcp uint32
-			s.server.db.QueryRow("SELECT savemercenary FROM characters WHERE id=$1", s.charID).Scan(&data)
-			s.server.db.QueryRow("SELECT COALESCE(gcp, 0) FROM characters WHERE id=$1", s.charID).Scan(&gcp)
+			data, dataErr := s.server.charRepo.LoadColumn(s.charID, "savemercenary")
+			if dataErr != nil {
+				s.logger.Warn("Failed to load savemercenary", zap.Error(dataErr))
+			}
+			gcp, gcpErr := readCharacterInt(s, "gcp")
+			if gcpErr != nil {
+				s.logger.Warn("Failed to read gcp", zap.Error(gcpErr))
+			}
 
 			if len(data) == 0 {
 				bf.WriteBool(false)
@@ -245,7 +266,7 @@ func handleMsgMhfReadMercenaryW(s *Session, p mhfpacket.MHFPacket) {
 				bf.WriteBool(true)
 				bf.WriteBytes(data)
 			}
-			bf.WriteUint32(gcp)
+			bf.WriteUint32(uint32(gcp))
 		}
 	}
 
@@ -254,8 +275,10 @@ func handleMsgMhfReadMercenaryW(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfReadMercenaryM(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfReadMercenaryM)
-	var data []byte
-	s.server.db.QueryRow("SELECT savemercenary FROM characters WHERE id = $1", pkt.CharID).Scan(&data)
+	data, err := s.server.charRepo.LoadColumn(pkt.CharID, "savemercenary")
+	if err != nil {
+		s.logger.Warn("Failed to load savemercenary for other character", zap.Error(err))
+	}
 	resp := byteframe.NewByteFrame()
 	if len(data) == 0 {
 		resp.WriteBool(false)
@@ -269,28 +292,32 @@ func handleMsgMhfContractMercenary(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfContractMercenary)
 	switch pkt.Op {
 	case 0: // Form loan
-		s.server.db.Exec("UPDATE characters SET pact_id=$1 WHERE id=$2", pkt.PactMercID, pkt.CID)
+		if err := s.server.charRepo.SaveInt(pkt.CID, "pact_id", int(pkt.PactMercID)); err != nil {
+			s.logger.Error("Failed to form mercenary loan", zap.Error(err))
+		}
 	case 1: // Cancel lend
-		s.server.db.Exec("UPDATE characters SET pact_id=0 WHERE id=$1", s.charID)
+		if err := s.server.charRepo.SaveInt(s.charID, "pact_id", 0); err != nil {
+			s.logger.Error("Failed to cancel mercenary lend", zap.Error(err))
+		}
 	case 2: // Cancel loan
-		s.server.db.Exec("UPDATE characters SET pact_id=0 WHERE id=$1", pkt.CID)
+		if err := s.server.charRepo.SaveInt(pkt.CID, "pact_id", 0); err != nil {
+			s.logger.Error("Failed to cancel mercenary loan", zap.Error(err))
+		}
 	}
 	doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
 }
 
 func handleMsgMhfLoadOtomoAirou(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfLoadOtomoAirou)
-	var data []byte
-	err := s.server.db.QueryRow("SELECT otomoairou FROM characters WHERE id = $1", s.charID).Scan(&data)
-	if len(data) == 0 {
-		s.logger.Error("Failed to load otomoairou", zap.Error(err))
-		data = make([]byte, 10)
-	}
-	doAckBufSucceed(s, pkt.AckHandle, data)
+	loadCharacterData(s, pkt.AckHandle, "otomoairou", make([]byte, 10))
 }
 
 func handleMsgMhfSaveOtomoAirou(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSaveOtomoAirou)
+	if len(pkt.RawDataPayload) < 2 {
+		doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
+		return
+	}
 	dumpSaveData(s, pkt.RawDataPayload, "otomoairou")
 	decomp, err := nullcomp.Decompress(pkt.RawDataPayload[1:])
 	if err != nil {
@@ -308,7 +335,12 @@ func handleMsgMhfSaveOtomoAirou(s *Session, p mhfpacket.MHFPacket) {
 		dataLen := bf.ReadUint32()
 		catID := bf.ReadUint32()
 		if catID == 0 {
-			_ = s.server.db.QueryRow("SELECT nextval('airou_id_seq')").Scan(&catID)
+			catID, err = s.server.mercenaryRepo.NextAirouID()
+			if err != nil {
+				s.logger.Error("Failed to get next airou ID", zap.Error(err))
+				doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
+				return
+			}
 		}
 		exists := bf.ReadBool()
 		data := bf.ReadBytes(uint(dataLen) - 5)
@@ -321,14 +353,16 @@ func handleMsgMhfSaveOtomoAirou(s *Session, p mhfpacket.MHFPacket) {
 		}
 	}
 	save.WriteBytes(bf.DataFromCurrent())
-	save.Seek(0, 0)
+	_, _ = save.Seek(0, 0)
 	save.WriteUint8(catsExist)
 	comp, err := nullcomp.Compress(save.Data())
 	if err != nil {
 		s.logger.Error("Failed to compress airou", zap.Error(err))
 	} else {
 		comp = append([]byte{0x01}, comp...)
-		s.server.db.Exec("UPDATE characters SET otomoairou=$1 WHERE id=$2", comp, s.charID)
+		if err := s.server.charRepo.SaveColumn(s.charID, "otomoairou", comp); err != nil {
+			s.logger.Error("Failed to save otomoairou", zap.Error(err))
+		}
 	}
 	doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
 }
@@ -352,6 +386,7 @@ func handleMsgMhfEnumerateAiroulist(s *Session, p mhfpacket.MHFPacket) {
 	doAckBufSucceed(s, pkt.AckHandle, resp.Data())
 }
 
+// Airou represents Airou (felyne companion) data.
 type Airou struct {
 	ID          uint32
 	Name        []byte
@@ -366,45 +401,32 @@ type Airou struct {
 func getGuildAirouList(s *Session) []Airou {
 	var guildCats []Airou
 	bannedCats := make(map[uint32]int)
-	guild, err := GetGuildInfoByCharacterId(s, s.charID)
+	guild, err := s.server.guildRepo.GetByCharID(s.charID)
 	if err != nil {
 		return guildCats
 	}
-	rows, err := s.server.db.Query(`SELECT cats_used FROM guild_hunts gh
-		INNER JOIN characters c ON gh.host_id = c.id WHERE c.id=$1
-	`, s.charID)
+	usages, err := s.server.mercenaryRepo.GetGuildHuntCatsUsed(s.charID)
 	if err != nil {
 		s.logger.Warn("Failed to get recently used airous", zap.Error(err))
 		return guildCats
 	}
 
-	var csvTemp string
-	var startTemp time.Time
-	for rows.Next() {
-		err = rows.Scan(&csvTemp, &startTemp)
-		if err != nil {
-			continue
-		}
-		if startTemp.Add(time.Second * time.Duration(s.server.erupeConfig.GameplayOptions.TreasureHuntPartnyaCooldown)).Before(TimeAdjusted()) {
-			for i, j := range stringsupport.CSVElems(csvTemp) {
+	for _, usage := range usages {
+		if usage.Start.Add(time.Second * time.Duration(s.server.erupeConfig.GameplayOptions.TreasureHuntPartnyaCooldown)).Before(TimeAdjusted()) {
+			for i, j := range stringsupport.CSVElems(usage.CatsUsed) {
 				bannedCats[uint32(j)] = i
 			}
 		}
 	}
 
-	rows, err = s.server.db.Query(`SELECT c.otomoairou FROM characters c
-	INNER JOIN guild_characters gc ON gc.character_id = c.id
-	WHERE gc.guild_id = $1 AND c.otomoairou IS NOT NULL
-	ORDER BY c.id LIMIT 60`, guild.ID)
+	airouData, err := s.server.mercenaryRepo.GetGuildAirou(guild.ID)
 	if err != nil {
 		s.logger.Warn("Selecting otomoairou based on guild failed", zap.Error(err))
 		return guildCats
 	}
 
-	for rows.Next() {
-		var data []byte
-		err = rows.Scan(&data)
-		if err != nil || len(data) == 0 {
+	for _, data := range airouData {
+		if len(data) == 0 {
 			continue
 		}
 		// first byte has cat existence in general, can skip if 0
@@ -427,6 +449,7 @@ func getGuildAirouList(s *Session) []Airou {
 	return guildCats
 }
 
+// GetAirouDetails parses Airou data from a ByteFrame.
 func GetAirouDetails(bf *byteframe.ByteFrame) []Airou {
 	catCount := bf.ReadUint8()
 	cats := make([]Airou, catCount)
@@ -438,18 +461,18 @@ func GetAirouDetails(bf *byteframe.ByteFrame) []Airou {
 		catStart, _ := bf.Seek(0, io.SeekCurrent)
 
 		catDef.ID = bf.ReadUint32()
-		bf.Seek(1, io.SeekCurrent)     // unknown value, probably a bool
-		catDef.Name = bf.ReadBytes(18) // always 18 len, reads first null terminated string out of section and discards rest
+		_, _ = bf.Seek(1, io.SeekCurrent) // unknown value, probably a bool
+		catDef.Name = bf.ReadBytes(18)    // always 18 len, reads first null terminated string out of section and discards rest
 		catDef.Task = bf.ReadUint8()
-		bf.Seek(16, io.SeekCurrent) // appearance data and what is seemingly null bytes
+		_, _ = bf.Seek(16, io.SeekCurrent) // appearance data and what is seemingly null bytes
 		catDef.Personality = bf.ReadUint8()
 		catDef.Class = bf.ReadUint8()
-		bf.Seek(5, io.SeekCurrent)          // affection and colour sliders
+		_, _ = bf.Seek(5, io.SeekCurrent)   // affection and colour sliders
 		catDef.Experience = bf.ReadUint32() // raw cat rank points, doesn't have a rank
-		bf.Seek(1, io.SeekCurrent)          // bool for weapon being equipped
+		_, _ = bf.Seek(1, io.SeekCurrent)   // bool for weapon being equipped
 		catDef.WeaponType = bf.ReadUint8()  // weapon type, presumably always 6 for melee?
 		catDef.WeaponID = bf.ReadUint16()   // weapon id
-		bf.Seek(catStart+int64(catDefLen), io.SeekStart)
+		_, _ = bf.Seek(catStart+int64(catDefLen), io.SeekStart)
 		cats[x] = catDef
 	}
 	return cats

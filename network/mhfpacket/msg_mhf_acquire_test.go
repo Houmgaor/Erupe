@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"erupe-ce/common/byteframe"
+	cfg "erupe-ce/config"
 	"erupe-ce/network"
 	"erupe-ce/network/clientctx"
 )
@@ -48,10 +49,10 @@ func TestMsgMhfAcquireGuildTresureParse(t *testing.T) {
 			bf.WriteUint32(tt.ackHandle)
 			bf.WriteUint32(tt.huntID)
 			bf.WriteBool(tt.unk)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgMhfAcquireGuildTresure{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -85,14 +86,14 @@ func TestMsgMhfAcquireTitleParse(t *testing.T) {
 			bf := byteframe.NewByteFrame()
 			bf.WriteUint32(tt.ackHandle)
 			bf.WriteUint16(uint16(len(tt.titleIDs))) // count
-			bf.WriteUint16(0)                         // zeroed
+			bf.WriteUint16(0)                        // zeroed
 			for _, id := range tt.titleIDs {
 				bf.WriteUint16(id)
 			}
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgMhfAcquireTitle{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -130,10 +131,10 @@ func TestMsgMhfAcquireDistItemParse(t *testing.T) {
 			bf.WriteUint32(tt.ackHandle)
 			bf.WriteUint8(tt.distributionType)
 			bf.WriteUint32(tt.distributionID)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgMhfAcquireDistItem{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -174,10 +175,10 @@ func TestMsgMhfAcquireMonthlyItemParse(t *testing.T) {
 			bf.WriteUint16(tt.unk2)
 			bf.WriteUint32(tt.unk3)
 			bf.WriteUint32(0) // Zeroed (consumed by Parse)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgMhfAcquireMonthlyItem{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -228,10 +229,10 @@ func TestAcquirePacketEdgeCases(t *testing.T) {
 		bf.WriteUint32(1)
 		bf.WriteUint32(0xFFFFFFFF)
 		bf.WriteBool(true)
-		bf.Seek(0, io.SeekStart)
+		_, _ = bf.Seek(0, io.SeekStart)
 
 		pkt := &MsgMhfAcquireGuildTresure{}
-		err := pkt.Parse(bf, &clientctx.ClientContext{})
+		err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -247,10 +248,10 @@ func TestAcquirePacketEdgeCases(t *testing.T) {
 			bf.WriteUint32(1)
 			bf.WriteUint8(i)
 			bf.WriteUint32(12345)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgMhfAcquireDistItem{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v for type %d", err, i)
 			}

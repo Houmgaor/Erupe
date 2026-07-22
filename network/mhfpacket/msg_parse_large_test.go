@@ -6,17 +6,18 @@ import (
 	"testing"
 
 	"erupe-ce/common/byteframe"
+	cfg "erupe-ce/config"
 	"erupe-ce/network/clientctx"
 )
 
 // TestParseLargeMsgSysUpdateRightBuild tests Build for MsgSysUpdateRight (no Parse implementation).
 func TestParseLargeMsgSysUpdateRightBuild(t *testing.T) {
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	original := &MsgSysUpdateRight{
 		ClientRespAckHandle: 0x12345678,
 		Bitfield:            0xDEADBEEF,
 		Rights:              nil,
-		UnkSize:             0,
+		TokenLength:         0,
 	}
 
 	bf := byteframe.NewByteFrame()
@@ -31,7 +32,7 @@ func TestParseLargeMsgSysUpdateRightBuild(t *testing.T) {
 		t.Fatalf("Build() wrote %d bytes, want at least 12", len(data))
 	}
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 	if bf.ReadUint32() != 0x12345678 {
 		t.Error("ClientRespAckHandle mismatch")
 	}
@@ -54,10 +55,10 @@ func TestParseLargeMsgMhfOperateWarehouse(t *testing.T) {
 	bf.WriteUint16(0)          // Unk
 	bf.WriteBytes([]byte("TestBox"))
 	bf.WriteUint8(0) // null terminator
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfOperateWarehouse{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -81,18 +82,18 @@ func TestParseLargeMsgMhfOperateWarehouse(t *testing.T) {
 // TestParseLargeMsgMhfOperateWarehouseEquip tests Parse for MsgMhfOperateWarehouse with equip box type.
 func TestParseLargeMsgMhfOperateWarehouseEquip(t *testing.T) {
 	bf := byteframe.NewByteFrame()
-	bf.WriteUint32(42)  // AckHandle
-	bf.WriteUint8(2)    // Operation
-	bf.WriteUint8(1)    // BoxType = equip
-	bf.WriteUint8(0)    // BoxIndex
-	bf.WriteUint8(5)    // lenName
-	bf.WriteUint16(0)   // Unk
+	bf.WriteUint32(42) // AckHandle
+	bf.WriteUint8(2)   // Operation
+	bf.WriteUint8(1)   // BoxType = equip
+	bf.WriteUint8(0)   // BoxIndex
+	bf.WriteUint8(5)   // lenName
+	bf.WriteUint16(0)  // Unk
 	bf.WriteBytes([]byte("Arms"))
 	bf.WriteUint8(0) // null terminator
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfOperateWarehouse{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -125,14 +126,14 @@ func TestParseLargeMsgMhfLoadHouse(t *testing.T) {
 			bf.WriteUint32(tt.charID)
 			bf.WriteUint8(tt.destination)
 			bf.WriteBool(tt.checkPass)
-			bf.WriteUint16(0) // Unk (hardcoded 0)
+			bf.WriteUint16(0)                          // Unk (hardcoded 0)
 			bf.WriteUint8(uint8(len(tt.password) + 1)) // Password length
 			bf.WriteBytes([]byte(tt.password))
 			bf.WriteUint8(0) // null terminator
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgMhfLoadHouse{}
-			if err := pkt.Parse(bf, nil); err != nil {
+			if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
 
@@ -168,10 +169,10 @@ func TestParseLargeMsgMhfSendMail(t *testing.T) {
 	bf.WriteUint8(0) // null terminator for Subject
 	bf.WriteBytes([]byte("Hello World"))
 	bf.WriteUint8(0) // null terminator for Body
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfSendMail{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -229,10 +230,10 @@ func TestParseLargeMsgMhfApplyBbsArticle(t *testing.T) {
 	copy(descBytes, "This is a description")
 	bf.WriteBytes(descBytes)
 
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfApplyBbsArticle{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -267,10 +268,10 @@ func TestParseLargeMsgMhfChargeFesta(t *testing.T) {
 	bf.WriteUint16(20)         // soul value 2
 	bf.WriteUint16(30)         // soul value 3
 	bf.WriteUint8(0)           // Unk
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfChargeFesta{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -297,15 +298,15 @@ func TestParseLargeMsgMhfChargeFesta(t *testing.T) {
 // TestParseLargeMsgMhfChargeFestaZeroSouls tests Parse for MsgMhfChargeFesta with zero soul entries.
 func TestParseLargeMsgMhfChargeFestaZeroSouls(t *testing.T) {
 	bf := byteframe.NewByteFrame()
-	bf.WriteUint32(1)   // AckHandle
-	bf.WriteUint32(0)   // FestaID
-	bf.WriteUint32(0)   // GuildID
-	bf.WriteUint16(0)   // soul count = 0
-	bf.WriteUint8(0)    // Unk
-	bf.Seek(0, io.SeekStart)
+	bf.WriteUint32(1) // AckHandle
+	bf.WriteUint32(0) // FestaID
+	bf.WriteUint32(0) // GuildID
+	bf.WriteUint16(0) // soul count = 0
+	bf.WriteUint8(0)  // Unk
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfChargeFesta{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 	if len(pkt.Souls) != 0 {
@@ -318,17 +319,17 @@ func TestParseLargeMsgMhfChargeFestaZeroSouls(t *testing.T) {
 // uint8 dataLen, 4 bytes Data1, dataLen bytes Data2.
 func TestParseLargeMsgMhfOperateJoint(t *testing.T) {
 	bf := byteframe.NewByteFrame()
-	bf.WriteUint32(0x12345678)              // AckHandle
-	bf.WriteUint32(100)                     // AllianceID
-	bf.WriteUint32(200)                     // GuildID
-	bf.WriteUint8(0x01)                     // Action = OPERATE_JOINT_DISBAND
-	bf.WriteUint8(3)                        // dataLen = 3
+	bf.WriteUint32(0x12345678)                    // AckHandle
+	bf.WriteUint32(100)                           // AllianceID
+	bf.WriteUint32(200)                           // GuildID
+	bf.WriteUint8(0x01)                           // Action = OPERATE_JOINT_DISBAND
+	bf.WriteUint8(3)                              // dataLen = 3
 	bf.WriteBytes([]byte{0xAA, 0xBB, 0xCC, 0xDD}) // Data1 (always 4 bytes)
-	bf.WriteBytes([]byte{0x01, 0x02, 0x03})        // Data2 (dataLen bytes)
-	bf.Seek(0, io.SeekStart)
+	bf.WriteBytes([]byte{0x01, 0x02, 0x03})       // Data2 (dataLen bytes)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfOperateJoint{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -361,10 +362,10 @@ func TestParseLargeMsgMhfOperationInvGuild(t *testing.T) {
 	bf.WriteUint8(7)           // DaysActive
 	bf.WriteUint8(3)           // PlayStyle
 	bf.WriteUint8(2)           // GuildRequest
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfOperationInvGuild{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -393,17 +394,17 @@ func TestParseLargeMsgMhfSaveMercenary(t *testing.T) {
 	mercData := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
 
 	bf := byteframe.NewByteFrame()
-	bf.WriteUint32(0xCAFEBABE) // AckHandle
-	bf.WriteUint32(0)          // lenData (skipped)
-	bf.WriteUint32(5000)       // GCP
-	bf.WriteUint32(42)         // PactMercID
+	bf.WriteUint32(0xCAFEBABE)            // AckHandle
+	bf.WriteUint32(0)                     // lenData (skipped)
+	bf.WriteUint32(5000)                  // GCP
+	bf.WriteUint32(42)                    // PactMercID
 	bf.WriteUint32(uint32(len(mercData))) // dataSize
-	bf.WriteUint32(0)          // Merc index (skipped)
+	bf.WriteUint32(0)                     // Merc index (skipped)
 	bf.WriteBytes(mercData)
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfSaveMercenary{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -435,17 +436,17 @@ func TestParseLargeMsgMhfUpdateHouse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
-			bf.WriteUint32(0x12345678) // AckHandle
-			bf.WriteUint8(tt.state)    // State
-			bf.WriteUint8(1)           // Unk1
-			bf.WriteUint16(0)          // Unk2
+			bf.WriteUint32(0x12345678)                 // AckHandle
+			bf.WriteUint8(tt.state)                    // State
+			bf.WriteUint8(1)                           // Unk1
+			bf.WriteUint16(0)                          // Unk2
 			bf.WriteUint8(uint8(len(tt.password) + 1)) // Password length
 			bf.WriteBytes([]byte(tt.password))
 			bf.WriteUint8(0) // null terminator
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgMhfUpdateHouse{}
-			if err := pkt.Parse(bf, nil); err != nil {
+			if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
 
@@ -455,8 +456,8 @@ func TestParseLargeMsgMhfUpdateHouse(t *testing.T) {
 			if pkt.State != tt.state {
 				t.Errorf("State = %d, want %d", pkt.State, tt.state)
 			}
-			if pkt.Unk1 != 1 {
-				t.Errorf("Unk1 = %d, want 1", pkt.Unk1)
+			if pkt.HasPassword != 1 {
+				t.Errorf("HasPassword = %d, want 1", pkt.HasPassword)
 			}
 			if pkt.Password != tt.password {
 				t.Errorf("Password = %q, want %q", pkt.Password, tt.password)
@@ -472,15 +473,15 @@ func TestParseLargeMsgSysCreateAcquireSemaphore(t *testing.T) {
 	copy(semBytes, semID)
 
 	bf := byteframe.NewByteFrame()
-	bf.WriteUint32(0xDEADBEEF) // AckHandle
-	bf.WriteUint16(100)        // Unk0
-	bf.WriteUint8(4)           // PlayerCount
+	bf.WriteUint32(0xDEADBEEF)          // AckHandle
+	bf.WriteUint16(100)                 // Unk0
+	bf.WriteUint8(4)                    // PlayerCount
 	bf.WriteUint8(uint8(len(semBytes))) // SemaphoreIDLength
 	bf.WriteBytes(semBytes)
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgSysCreateAcquireSemaphore{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -503,16 +504,16 @@ func TestParseLargeMsgMhfOperateGuild(t *testing.T) {
 	dataPayload := []byte{0x10, 0x20, 0x30, 0x40, 0x50}
 
 	bf := byteframe.NewByteFrame()
-	bf.WriteUint32(0xAABBCCDD)          // AckHandle
-	bf.WriteUint32(999)                 // GuildID
-	bf.WriteUint8(0x09)                 // Action = OperateGuildUpdateComment
-	bf.WriteUint8(uint8(len(dataPayload))) // dataLen
+	bf.WriteUint32(0xAABBCCDD)                    // AckHandle
+	bf.WriteUint32(999)                           // GuildID
+	bf.WriteUint8(0x09)                           // Action = OperateGuildUpdateComment
+	bf.WriteUint8(uint8(len(dataPayload)))        // dataLen
 	bf.WriteBytes([]byte{0x01, 0x02, 0x03, 0x04}) // Data1 (always 4 bytes)
-	bf.WriteBytes(dataPayload) // Data2 (dataLen bytes)
-	bf.Seek(0, io.SeekStart)
+	bf.WriteBytes(dataPayload)                    // Data2 (dataLen bytes)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfOperateGuild{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -549,10 +550,10 @@ func TestParseLargeMsgMhfReadBeatLevel(t *testing.T) {
 	for _, id := range ids {
 		bf.WriteUint32(id)
 	}
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfReadBeatLevel{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -593,10 +594,10 @@ func TestParseLargeMsgSysCreateObject(t *testing.T) {
 			bf.WriteFloat32(tt.y)
 			bf.WriteFloat32(tt.z)
 			bf.WriteUint32(tt.unk0)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgSysCreateObject{}
-			if err := pkt.Parse(bf, nil); err != nil {
+			if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
 
@@ -629,10 +630,10 @@ func TestParseLargeMsgSysLockGlobalSema(t *testing.T) {
 	bf.WriteUint8(0) // null terminator
 	bf.WriteBytes([]byte("channel_01"))
 	bf.WriteUint8(0) // null terminator
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgSysLockGlobalSema{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -656,15 +657,15 @@ func TestParseLargeMsgSysLockGlobalSema(t *testing.T) {
 // TestParseLargeMsgMhfCreateJoint tests Parse for MsgMhfCreateJoint.
 func TestParseLargeMsgMhfCreateJoint(t *testing.T) {
 	bf := byteframe.NewByteFrame()
-	bf.WriteUint32(0xCAFEBABE)     // AckHandle
-	bf.WriteUint32(500)            // GuildID
-	bf.WriteUint32(15)             // len (unused)
+	bf.WriteUint32(0xCAFEBABE) // AckHandle
+	bf.WriteUint32(500)        // GuildID
+	bf.WriteUint32(15)         // len (unused)
 	bf.WriteBytes([]byte("Alliance01"))
 	bf.WriteUint8(0) // null terminator
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfCreateJoint{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -686,10 +687,10 @@ func TestParseLargeMsgMhfGetUdTacticsRemainingPoint(t *testing.T) {
 	bf.WriteUint32(100)        // Unk0
 	bf.WriteUint32(200)        // Unk1
 	bf.WriteUint32(300)        // Unk2
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfGetUdTacticsRemainingPoint{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -715,10 +716,10 @@ func TestParseLargeMsgMhfPostCafeDurationBonusReceived(t *testing.T) {
 	bf.WriteUint32(1001)       // CafeBonusID[0]
 	bf.WriteUint32(1002)       // CafeBonusID[1]
 	bf.WriteUint32(1003)       // CafeBonusID[2]
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfPostCafeDurationBonusReceived{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -741,10 +742,10 @@ func TestParseLargeMsgMhfPostCafeDurationBonusReceivedEmpty(t *testing.T) {
 	bf := byteframe.NewByteFrame()
 	bf.WriteUint32(1) // AckHandle
 	bf.WriteUint32(0) // count = 0
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfPostCafeDurationBonusReceived{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 	if len(pkt.CafeBonusID) != 0 {
@@ -759,10 +760,10 @@ func TestParseLargeMsgMhfRegistGuildAdventureDiva(t *testing.T) {
 	bf.WriteUint32(5)          // Destination
 	bf.WriteUint32(1000)       // Charge
 	bf.WriteUint32(42)         // CharID (skipped)
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfRegistGuildAdventureDiva{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -784,10 +785,10 @@ func TestParseLargeMsgMhfStateFestaG(t *testing.T) {
 	bf.WriteUint32(100)        // FestaID
 	bf.WriteUint32(200)        // GuildID
 	bf.WriteUint16(0)          // Hardcoded 0
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfStateFestaG{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -809,10 +810,10 @@ func TestParseLargeMsgMhfStateFestaU(t *testing.T) {
 	bf.WriteUint32(300)        // FestaID
 	bf.WriteUint32(400)        // GuildID
 	bf.WriteUint16(0)          // Hardcoded 0
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgMhfStateFestaU{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -835,10 +836,10 @@ func TestParseLargeMsgSysEnumerateStage(t *testing.T) {
 	bf.WriteUint8(0)           // skipped byte
 	bf.WriteBytes([]byte("quest_"))
 	bf.WriteUint8(0) // null terminator
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgSysEnumerateStage{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
@@ -857,14 +858,14 @@ func TestParseLargeMsgSysReserveStage(t *testing.T) {
 	copy(stageBytes, stageID)
 
 	bf := byteframe.NewByteFrame()
-	bf.WriteUint32(0xAABBCCDD) // AckHandle
-	bf.WriteUint8(0x11)        // Ready
+	bf.WriteUint32(0xAABBCCDD)            // AckHandle
+	bf.WriteUint8(0x11)                   // Ready
 	bf.WriteUint8(uint8(len(stageBytes))) // stageIDLength
 	bf.WriteBytes(stageBytes)
-	bf.Seek(0, io.SeekStart)
+	_, _ = bf.Seek(0, io.SeekStart)
 
 	pkt := &MsgSysReserveStage{}
-	if err := pkt.Parse(bf, nil); err != nil {
+	if err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ}); err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 

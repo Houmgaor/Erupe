@@ -1,0 +1,133 @@
+name: Build and Test
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'fix-*'
+      - 'feature-*'
+    paths:
+      - 'common/**'
+      - 'config/**'
+      - 'network/**'
+      - 'server/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'main.go'
+      - '.github/workflows/go.yml'
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: erupe_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 10
+          --mount type=tmpfs,destination=/var/lib/postgresql/data
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.25'
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Run Tests with Race Detector and Coverage
+      run: go test -race -p 1 -coverprofile=coverage.out ./... -timeout=10m
+      env:
+        TEST_DB_HOST: localhost
+        TEST_DB_PORT: 5433
+        TEST_DB_USER: test
+        TEST_DB_PASSWORD: test
+        TEST_DB_NAME: erupe_test
+
+    - name: Check coverage threshold
+      run: |
+        COVERAGE=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print substr($3, 1, length($3)-1)}')
+        echo "Total coverage: ${COVERAGE}%"
+        if [ "$(echo "$COVERAGE < 50" | bc)" -eq 1 ]; then
+          echo "::error::Coverage ${COVERAGE}% is below 50% threshold"
+          exit 1
+        fi
+
+  build:
+    name: Build
+    needs: [test, lint]
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.25'
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Build Linux-amd64
+      run: env GOOS=linux GOARCH=amd64 go build -v
+
+    - name: Upload Linux-amd64 artifacts
+      uses: actions/upload-artifact@v6
+      with:
+        name: Linux-amd64
+        path: |
+          ./erupe-ce
+          ./bin/
+        retention-days: 7
+
+    - name: Build Windows-amd64
+      run: env GOOS=windows GOARCH=amd64 go build -v
+
+    - name: Upload Windows-amd64 artifacts
+      uses: actions/upload-artifact@v6
+      with:
+        name: Windows-amd64
+        path: |
+          ./erupe-ce.exe
+          ./bin/
+        retention-days: 7
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.25'
+
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v9
+      with:
+        version: v2.10.1
+        args: --timeout=5m

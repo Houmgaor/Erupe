@@ -2,10 +2,12 @@ package channelserver
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/binary"
+	"errors"
 	"testing"
 
-	_config "erupe-ce/config"
+	cfg "erupe-ce/config"
 	"erupe-ce/network/mhfpacket"
 	"erupe-ce/server/channelserver/compression/nullcomp"
 )
@@ -14,37 +16,37 @@ import (
 func TestGetPointers(t *testing.T) {
 	tests := []struct {
 		name       string
-		clientMode _config.Mode
+		clientMode cfg.Mode
 		wantGender int
 		wantHR     int
 	}{
 		{
 			name:       "ZZ_version",
-			clientMode: _config.ZZ,
+			clientMode: cfg.ZZ,
 			wantGender: 81,
 			wantHR:     130550,
 		},
 		{
 			name:       "Z2_version",
-			clientMode: _config.Z2,
+			clientMode: cfg.Z2,
 			wantGender: 81,
 			wantHR:     94550,
 		},
 		{
 			name:       "G10_version",
-			clientMode: _config.G10,
+			clientMode: cfg.G10,
 			wantGender: 81,
 			wantHR:     94550,
 		},
 		{
 			name:       "F5_version",
-			clientMode: _config.F5,
+			clientMode: cfg.F5,
 			wantGender: 81,
 			wantHR:     62550,
 		},
 		{
 			name:       "S6_version",
-			clientMode: _config.S6,
+			clientMode: cfg.S6,
 			wantGender: 81,
 			wantHR:     14550,
 		},
@@ -52,12 +54,7 @@ func TestGetPointers(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Save and restore original config
-			originalMode := _config.ErupeConfig.RealClientMode
-			defer func() { _config.ErupeConfig.RealClientMode = originalMode }()
-
-			_config.ErupeConfig.RealClientMode = tt.clientMode
-			pointers := getPointers()
+			pointers := getPointers(tt.clientMode)
 
 			if pointers[pGender] != tt.wantGender {
 				t.Errorf("pGender = %d, want %d", pointers[pGender], tt.wantGender)
@@ -216,10 +213,6 @@ func TestCharacterSaveData_RoundTrip(t *testing.T) {
 
 // TestCharacterSaveData_updateStructWithSaveData tests parsing save data
 func TestCharacterSaveData_updateStructWithSaveData(t *testing.T) {
-	originalMode := _config.ErupeConfig.RealClientMode
-	defer func() { _config.ErupeConfig.RealClientMode = originalMode }()
-	_config.ErupeConfig.RealClientMode = _config.Z2
-
 	tests := []struct {
 		name           string
 		isNewCharacter bool
@@ -267,7 +260,8 @@ func TestCharacterSaveData_updateStructWithSaveData(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			save := &CharacterSaveData{
-				Pointers:       getPointers(),
+				Mode:           cfg.Z2,
+				Pointers:       getPointers(cfg.Z2),
 				decompSave:     tt.setupSaveData(),
 				IsNewCharacter: tt.isNewCharacter,
 			}
@@ -287,10 +281,6 @@ func TestCharacterSaveData_updateStructWithSaveData(t *testing.T) {
 
 // TestCharacterSaveData_updateSaveDataWithStruct tests writing struct to save data
 func TestCharacterSaveData_updateSaveDataWithStruct(t *testing.T) {
-	originalMode := _config.ErupeConfig.RealClientMode
-	defer func() { _config.ErupeConfig.RealClientMode = originalMode }()
-	_config.ErupeConfig.RealClientMode = _config.G10
-
 	tests := []struct {
 		name   string
 		rp     uint16
@@ -320,7 +310,8 @@ func TestCharacterSaveData_updateSaveDataWithStruct(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			save := &CharacterSaveData{
-				Pointers:   getPointers(),
+				Mode:       cfg.G10,
+				Pointers:   getPointers(cfg.G10),
 				decompSave: make([]byte, 150000),
 				RP:         tt.rp,
 				KQF:        tt.kqf,
@@ -388,11 +379,6 @@ func TestGetCharacterSaveData_Integration(t *testing.T) {
 	db := SetupTestDB(t)
 	defer TeardownTestDB(t, db)
 
-	// Save original config mode
-	originalMode := _config.ErupeConfig.RealClientMode
-	defer func() { _config.ErupeConfig.RealClientMode = originalMode }()
-	_config.ErupeConfig.RealClientMode = _config.Z2
-
 	tests := []struct {
 		name           string
 		charName       string
@@ -429,7 +415,8 @@ func TestGetCharacterSaveData_Integration(t *testing.T) {
 			mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 			s := createTestSession(mock)
 			s.charID = charID
-			s.server.db = db
+			SetTestDB(s.server, db)
+			s.server.erupeConfig.RealClientMode = cfg.Z2
 
 			// Get character save data
 			saveData, err := GetCharacterSaveData(s, charID)
@@ -459,15 +446,148 @@ func TestGetCharacterSaveData_Integration(t *testing.T) {
 	}
 }
 
+// TestGetCharacterSaveData_BackupRecovery tests that a character whose primary
+// savedata has a hash mismatch is transparently recovered from the backup table.
+func TestGetCharacterSaveData_BackupRecovery(t *testing.T) {
+	db := SetupTestDB(t)
+	defer TeardownTestDB(t, db)
+
+	// Build valid compressed savedata (same layout as CreateTestCharacter).
+	rawSave := make([]byte, 150000)
+	copy(rawSave[88:], append([]byte("BackupChar"), 0x00))
+	validCompressed, err := nullcomp.Compress(rawSave)
+	if err != nil {
+		t.Fatalf("compress valid savedata: %v", err)
+	}
+
+	// Build a compressed blob that will fail decompression (garbage bytes).
+	invalidCompressed := []byte("this is not valid compressed data")
+
+	corruptHash := make([]byte, 32) // all-zero hash is wrong for any real savedata
+	corruptHash[0] = 0xFF
+
+	repo := NewCharacterRepository(db)
+
+	t.Run("recovers_from_most_recent_backup", func(t *testing.T) {
+		userID := CreateTestUser(t, db, "recovery_user")
+		charID := CreateTestCharacter(t, db, userID, "BackupChar")
+
+		// Store a valid backup in slot 0.
+		if err := repo.SaveBackup(charID, 0, validCompressed); err != nil {
+			t.Fatalf("SaveBackup: %v", err)
+		}
+
+		// Set a wrong hash on the primary so the integrity check fails.
+		if _, err := db.Exec("UPDATE characters SET savedata_hash = $1 WHERE id = $2", corruptHash, charID); err != nil {
+			t.Fatalf("set corrupt hash: %v", err)
+		}
+
+		mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
+		s := createTestSession(mock)
+		s.charID = charID
+		SetTestDB(s.server, db)
+		s.server.erupeConfig.RealClientMode = cfg.Z2
+
+		got, err := GetCharacterSaveData(s, charID)
+		if err != nil {
+			t.Fatalf("GetCharacterSaveData() unexpected error: %v", err)
+		}
+		if got == nil {
+			t.Fatal("GetCharacterSaveData() returned nil")
+		}
+		if got.CharID != charID {
+			t.Errorf("CharID = %d, want %d", got.CharID, charID)
+		}
+	})
+
+	t.Run("skips_corrupt_backup_and_uses_next", func(t *testing.T) {
+		userID := CreateTestUser(t, db, "multibackup_user")
+		charID := CreateTestCharacter(t, db, userID, "BackupChar")
+
+		// Slot 1 is newer (saved second) but has invalid compressed data.
+		// Slot 0 is older but valid. Recovery must skip slot 1 and use slot 0.
+		if err := repo.SaveBackup(charID, 0, validCompressed); err != nil {
+			t.Fatalf("SaveBackup slot 0: %v", err)
+		}
+		if err := repo.SaveBackup(charID, 1, invalidCompressed); err != nil {
+			t.Fatalf("SaveBackup slot 1: %v", err)
+		}
+		// Update slot 1's saved_at to be newer than slot 0.
+		if _, err := db.Exec(
+			"UPDATE savedata_backups SET saved_at = now() + interval '1 minute' WHERE char_id = $1 AND slot = 1",
+			charID,
+		); err != nil {
+			t.Fatalf("update saved_at: %v", err)
+		}
+
+		if _, err := db.Exec("UPDATE characters SET savedata_hash = $1 WHERE id = $2", corruptHash, charID); err != nil {
+			t.Fatalf("set corrupt hash: %v", err)
+		}
+
+		mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
+		s := createTestSession(mock)
+		s.charID = charID
+		SetTestDB(s.server, db)
+		s.server.erupeConfig.RealClientMode = cfg.Z2
+
+		got, err := GetCharacterSaveData(s, charID)
+		if err != nil {
+			t.Fatalf("GetCharacterSaveData() unexpected error: %v", err)
+		}
+		if got == nil {
+			t.Fatal("GetCharacterSaveData() returned nil")
+		}
+	})
+
+	t.Run("returns_error_when_no_backups", func(t *testing.T) {
+		userID := CreateTestUser(t, db, "nobackup_user")
+		charID := CreateTestCharacter(t, db, userID, "NoBackupChar")
+
+		if _, err := db.Exec("UPDATE characters SET savedata_hash = $1 WHERE id = $2", corruptHash, charID); err != nil {
+			t.Fatalf("set corrupt hash: %v", err)
+		}
+
+		mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
+		s := createTestSession(mock)
+		s.charID = charID
+		SetTestDB(s.server, db)
+		s.server.erupeConfig.RealClientMode = cfg.Z2
+
+		_, err := GetCharacterSaveData(s, charID)
+		if err == nil {
+			t.Fatal("expected error when no backups available, got nil")
+		}
+	})
+
+	t.Run("returns_error_when_all_backups_corrupt", func(t *testing.T) {
+		userID := CreateTestUser(t, db, "allcorrupt_user")
+		charID := CreateTestCharacter(t, db, userID, "AllCorruptChar")
+
+		if err := repo.SaveBackup(charID, 0, invalidCompressed); err != nil {
+			t.Fatalf("SaveBackup: %v", err)
+		}
+
+		if _, err := db.Exec("UPDATE characters SET savedata_hash = $1 WHERE id = $2", corruptHash, charID); err != nil {
+			t.Fatalf("set corrupt hash: %v", err)
+		}
+
+		mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
+		s := createTestSession(mock)
+		s.charID = charID
+		SetTestDB(s.server, db)
+		s.server.erupeConfig.RealClientMode = cfg.Z2
+
+		_, err := GetCharacterSaveData(s, charID)
+		if err == nil {
+			t.Fatal("expected error when all backups corrupt, got nil")
+		}
+	})
+}
+
 // TestCharacterSaveData_Save_Integration tests saving character data to database
 func TestCharacterSaveData_Save_Integration(t *testing.T) {
 	db := SetupTestDB(t)
 	defer TeardownTestDB(t, db)
-
-	// Save original config mode
-	originalMode := _config.ErupeConfig.RealClientMode
-	defer func() { _config.ErupeConfig.RealClientMode = originalMode }()
-	_config.ErupeConfig.RealClientMode = _config.Z2
 
 	// Create test user and character
 	userID := CreateTestUser(t, db, "savetest")
@@ -477,7 +597,8 @@ func TestCharacterSaveData_Save_Integration(t *testing.T) {
 	mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 	s := createTestSession(mock)
 	s.charID = charID
-	s.server.db = db
+	SetTestDB(s.server, db)
+	s.server.erupeConfig.RealClientMode = cfg.Z2
 
 	// Load character save data
 	saveData, err := GetCharacterSaveData(s, charID)
@@ -493,7 +614,9 @@ func TestCharacterSaveData_Save_Integration(t *testing.T) {
 	saveData.WeaponID = 1234
 
 	// Save it
-	saveData.Save(s)
+	if err := saveData.Save(s); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
 
 	// Reload and verify
 	var hr, gr uint16
@@ -572,7 +695,7 @@ func BenchmarkCompress(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		save.Compress()
+		_ = save.Compress()
 	}
 }
 
@@ -587,6 +710,243 @@ func BenchmarkDecompress(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		save.Decompress()
+		_ = save.Decompress()
+	}
+}
+
+// --- Mock-based GetCharacterSaveData tests ---
+
+func TestGetCharacterSaveData_NilSavedata(t *testing.T) {
+	server := createMockServer()
+	mock := newMockCharacterRepo()
+	mock.loadSaveDataID = 42
+	mock.loadSaveDataName = "Hunter"
+	mock.loadSaveDataNew = true
+	server.charRepo = mock
+	session := createMockSession(42, server)
+
+	result, err := GetCharacterSaveData(session, 42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.CharID != 42 {
+		t.Errorf("CharID = %d, want 42", result.CharID)
+	}
+	if result.Name != "Hunter" {
+		t.Errorf("Name = %q, want %q", result.Name, "Hunter")
+	}
+	if !result.IsNewCharacter {
+		t.Error("IsNewCharacter should be true")
+	}
+}
+
+func TestGetCharacterSaveData_NotFound(t *testing.T) {
+	server := createMockServer()
+	mock := newMockCharacterRepo()
+	mock.loadSaveDataErr = sql.ErrNoRows
+	server.charRepo = mock
+	session := createMockSession(1, server)
+
+	result, err := GetCharacterSaveData(session, 999)
+	if err == nil {
+		t.Fatal("expected error for missing character")
+	}
+	if result != nil {
+		t.Error("expected nil result for missing character")
+	}
+}
+
+func TestGetCharacterSaveData_DBError(t *testing.T) {
+	server := createMockServer()
+	mock := newMockCharacterRepo()
+	mock.loadSaveDataErr = errors.New("connection refused")
+	server.charRepo = mock
+	session := createMockSession(1, server)
+
+	result, err := GetCharacterSaveData(session, 1)
+	if err == nil {
+		t.Fatal("expected error on DB failure")
+	}
+	if result != nil {
+		t.Error("expected nil result on DB failure")
+	}
+}
+
+func TestGetCharacterSaveData_WithCompressedData(t *testing.T) {
+	server := createMockServer()
+	mock := newMockCharacterRepo()
+
+	// Create minimal valid savedata and compress it
+	saveData := make([]byte, 150000)
+	copy(saveData[88:], append([]byte("TestHunter"), 0x00))
+	compressed, err := nullcomp.Compress(saveData)
+	if err != nil {
+		t.Fatalf("failed to compress test savedata: %v", err)
+	}
+
+	mock.loadSaveDataID = 10
+	mock.loadSaveDataData = compressed
+	mock.loadSaveDataName = "TestHunter"
+	mock.loadSaveDataNew = false
+	server.charRepo = mock
+	session := createMockSession(10, server)
+
+	result, err := GetCharacterSaveData(session, 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.CharID != 10 {
+		t.Errorf("CharID = %d, want 10", result.CharID)
+	}
+	if result.IsNewCharacter {
+		t.Error("IsNewCharacter should be false")
+	}
+	if result.Name != "TestHunter" {
+		t.Errorf("Name = %q, want %q", result.Name, "TestHunter")
+	}
+}
+
+func TestGetCharacterSaveData_NewCharacterSkipsDecompress(t *testing.T) {
+	// When savedata is nil AND IsNewCharacter=true, GetCharacterSaveData
+	// returns a valid result without decompressing.
+	server := createMockServer()
+	mock := newMockCharacterRepo()
+	mock.loadSaveDataID = 5
+	mock.loadSaveDataName = "NewPlayer"
+	mock.loadSaveDataNew = true
+	// loadSaveDataData is nil
+	server.charRepo = mock
+	session := createMockSession(5, server)
+
+	result, err := GetCharacterSaveData(session, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if !result.IsNewCharacter {
+		t.Error("IsNewCharacter should be true")
+	}
+	if result.CharID != 5 {
+		t.Errorf("CharID = %d, want 5", result.CharID)
+	}
+}
+
+func TestGetCharacterSaveData_ConfigMode(t *testing.T) {
+	server := createMockServer()
+	mock := newMockCharacterRepo()
+
+	saveData := make([]byte, 150000)
+	copy(saveData[88:], append([]byte("ModeTest"), 0x00))
+	compressed, err := nullcomp.Compress(saveData)
+	if err != nil {
+		t.Fatalf("failed to compress: %v", err)
+	}
+
+	mock.loadSaveDataID = 1
+	mock.loadSaveDataData = compressed
+	mock.loadSaveDataName = "ModeTest"
+	server.charRepo = mock
+
+	modes := []struct {
+		mode cfg.Mode
+		name string
+	}{
+		{cfg.S6, "S6"},
+		{cfg.F5, "F5"},
+		{cfg.G10, "G10"},
+		{cfg.Z2, "Z2"},
+		{cfg.ZZ, "ZZ"},
+	}
+	for _, tc := range modes {
+		mode := tc.mode
+		t.Run(tc.name, func(t *testing.T) {
+			server.erupeConfig.RealClientMode = mode
+			session := createMockSession(1, server)
+
+			result, err := GetCharacterSaveData(session, 1)
+			if err != nil {
+				t.Fatalf("unexpected error for mode %v: %v", mode, err)
+			}
+			if result.Mode != mode {
+				t.Errorf("Mode = %v, want %v", result.Mode, mode)
+			}
+			expectedPointers := getPointers(mode)
+			if len(result.Pointers) != len(expectedPointers) {
+				t.Errorf("Pointers count = %d, want %d", len(result.Pointers), len(expectedPointers))
+			}
+		})
+	}
+}
+
+// TestGetCharacterSaveData_IntegrityCheck verifies the SHA-256 hash guard and
+// that DisableSaveIntegrityCheck bypasses it without returning an error.
+func TestGetCharacterSaveData_IntegrityCheck(t *testing.T) {
+	// Build a minimal valid savedata blob and compress it.
+	rawSave := make([]byte, 150000)
+	copy(rawSave[88:], []byte("TestChar\x00"))
+	compressed, err := nullcomp.Compress(rawSave)
+	if err != nil {
+		t.Fatalf("compress: %v", err)
+	}
+
+	// A hash that deliberately does NOT match rawSave.
+	wrongHash := bytes.Repeat([]byte{0xDE}, 32)
+
+	tests := []struct {
+		name    string
+		disable bool
+		hash    []byte
+		wantErr bool
+	}{
+		{
+			name:    "nil hash skips check",
+			disable: false,
+			hash:    nil,
+			wantErr: false,
+		},
+		{
+			name:    "mismatched hash fails when check enabled",
+			disable: false,
+			hash:    wrongHash,
+			wantErr: true,
+		},
+		{
+			name:    "mismatched hash passes when check disabled",
+			disable: true,
+			hash:    wrongHash,
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := newMockCharacterRepo()
+			mock.loadSaveDataID = 1
+			mock.loadSaveDataData = compressed
+			mock.loadSaveDataName = "TestChar"
+			mock.loadSaveDataHash = tc.hash
+
+			server := createMockServer()
+			server.erupeConfig.RealClientMode = cfg.ZZ
+			server.erupeConfig.DisableSaveIntegrityCheck = tc.disable
+			server.charRepo = mock
+			session := createMockSession(1, server)
+
+			_, err := GetCharacterSaveData(session, 1)
+			if tc.wantErr && err == nil {
+				t.Error("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
 	}
 }

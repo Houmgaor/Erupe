@@ -7,7 +7,7 @@ import (
 
 	"go.uber.org/zap"
 
-	_config "erupe-ce/config"
+	cfg "erupe-ce/config"
 )
 
 // TestEncodeServerInfo_EmptyClanMemberLimits verifies the crash is FIXED when ClanMemberLimits is empty
@@ -15,21 +15,21 @@ import (
 // From erupe.log.1:659922
 // After fix: Should handle empty array gracefully with default value (60)
 func TestEncodeServerInfo_EmptyClanMemberLimits(t *testing.T) {
-	config := &_config.Config{
-		RealClientMode: _config.Z1,
+	config := &cfg.Config{
+		RealClientMode: cfg.Z1,
 		Host:           "127.0.0.1",
-		Entrance: _config.Entrance{
+		Entrance: cfg.Entrance{
 			Enabled: true,
 			Port:    53310,
-			Entries: []_config.EntranceServerInfo{
+			Entries: []cfg.EntranceServerInfo{
 				{
-					Name:        "TestServer",
-					Description: "Test",
-					IP:          "127.0.0.1",
-					Type:        0,
-					Recommended: 0,
+					Name:               "TestServer",
+					Description:        "Test",
+					IP:                 "127.0.0.1",
+					Type:               0,
+					Recommended:        0,
 					AllowedClientFlags: 0xFFFFFFFF,
-					Channels: []_config.EntranceChannelInfo{
+					Channels: []cfg.EntranceChannelInfo{
 						{
 							Port:       54001,
 							MaxPlayers: 100,
@@ -38,7 +38,7 @@ func TestEncodeServerInfo_EmptyClanMemberLimits(t *testing.T) {
 				},
 			},
 		},
-		GameplayOptions: _config.GameplayOptions{
+		GameplayOptions: cfg.GameplayOptions{
 			ClanMemberLimits: [][]uint8{}, // Empty array - should now use default (60) instead of panicking
 		},
 	}
@@ -74,10 +74,10 @@ func TestEncodeServerInfo_EmptyClanMemberLimits(t *testing.T) {
 func TestClanMemberLimitsBoundsChecking(t *testing.T) {
 	// Test the bounds checking logic directly
 	testCases := []struct {
-		name              string
-		clanMemberLimits  [][]uint8
-		expectedValue     uint8
-		expectDefault     bool
+		name             string
+		clanMemberLimits [][]uint8
+		expectedValue    uint8
+		expectDefault    bool
 	}{
 		{"empty array", [][]uint8{}, 60, true},
 		{"single row with 2 columns", [][]uint8{{1, 50}}, 50, false},
@@ -112,26 +112,23 @@ func TestClanMemberLimitsBoundsChecking(t *testing.T) {
 	}
 }
 
-
-// TestEncodeServerInfo_MissingSecondColumnClanMemberLimits tests accessing [last][1] when [last] is too small
-// Previously panicked: runtime error: index out of range [1]
-// After fix: Should handle missing column gracefully with default value (60)
-func TestEncodeServerInfo_MissingSecondColumnClanMemberLimits(t *testing.T) {
-	config := &_config.Config{
-		RealClientMode: _config.Z1,
+// TestEncodeServerInfo_WithMockRepo tests encodeServerInfo with a mock server repo
+func TestEncodeServerInfo_WithMockRepo(t *testing.T) {
+	config := &cfg.Config{
+		RealClientMode: cfg.Z1,
 		Host:           "127.0.0.1",
-		Entrance: _config.Entrance{
+		Entrance: cfg.Entrance{
 			Enabled: true,
 			Port:    53310,
-			Entries: []_config.EntranceServerInfo{
+			Entries: []cfg.EntranceServerInfo{
 				{
-					Name:        "TestServer",
-					Description: "Test",
-					IP:          "127.0.0.1",
-					Type:        0,
-					Recommended: 0,
+					Name:               "TestServer",
+					Description:        "Test",
+					IP:                 "127.0.0.1",
+					Type:               0,
+					Recommended:        0,
 					AllowedClientFlags: 0xFFFFFFFF,
-					Channels: []_config.EntranceChannelInfo{
+					Channels: []cfg.EntranceChannelInfo{
 						{
 							Port:       54001,
 							MaxPlayers: 100,
@@ -140,7 +137,102 @@ func TestEncodeServerInfo_MissingSecondColumnClanMemberLimits(t *testing.T) {
 				},
 			},
 		},
-		GameplayOptions: _config.GameplayOptions{
+		GameplayOptions: cfg.GameplayOptions{
+			ClanMemberLimits: [][]uint8{{1, 60}},
+		},
+	}
+
+	server := &Server{
+		logger:      zap.NewNop(),
+		erupeConfig: config,
+		serverRepo:  &mockEntranceServerRepo{currentPlayers: 42},
+	}
+
+	result := encodeServerInfo(config, server, true)
+	if len(result) == 0 {
+		t.Error("encodeServerInfo returned empty result")
+	}
+}
+
+// TestMakeUsrResp_WithMockRepo tests makeUsrResp with a mock session repo
+func TestMakeUsrResp_WithMockRepo(t *testing.T) {
+	config := &cfg.Config{
+		RealClientMode: cfg.Z1,
+	}
+
+	server := &Server{
+		logger:      zap.NewNop(),
+		erupeConfig: config,
+		sessionRepo: &mockEntranceSessionRepo{serverID: 1234},
+	}
+
+	// Build a minimal USR request packet:
+	// 4 bytes ALL+ prefix, 1 byte 0x00, 2 bytes entry count, then 4 bytes per entry (char ID)
+	pkt := []byte{
+		'A', 'L', 'L', '+',
+		0x00,
+		0x00, 0x01, // 1 entry
+		0x00, 0x00, 0x00, 0x01, // char_id = 1
+	}
+
+	result := makeUsrResp(pkt, server)
+	if len(result) == 0 {
+		t.Error("makeUsrResp returned empty result")
+	}
+}
+
+// TestMakeUsrResp_NilSessionRepo tests makeUsrResp when sessionRepo is nil
+func TestMakeUsrResp_NilSessionRepo(t *testing.T) {
+	config := &cfg.Config{
+		RealClientMode: cfg.Z1,
+	}
+
+	server := &Server{
+		logger:      zap.NewNop(),
+		erupeConfig: config,
+	}
+
+	pkt := []byte{
+		'A', 'L', 'L', '+',
+		0x00,
+		0x00, 0x01,
+		0x00, 0x00, 0x00, 0x01,
+	}
+
+	result := makeUsrResp(pkt, server)
+	if len(result) == 0 {
+		t.Error("makeUsrResp returned empty result")
+	}
+}
+
+// TestEncodeServerInfo_MissingSecondColumnClanMemberLimits tests accessing [last][1] when [last] is too small
+// Previously panicked: runtime error: index out of range [1]
+// After fix: Should handle missing column gracefully with default value (60)
+func TestEncodeServerInfo_MissingSecondColumnClanMemberLimits(t *testing.T) {
+	config := &cfg.Config{
+		RealClientMode: cfg.Z1,
+		Host:           "127.0.0.1",
+		Entrance: cfg.Entrance{
+			Enabled: true,
+			Port:    53310,
+			Entries: []cfg.EntranceServerInfo{
+				{
+					Name:               "TestServer",
+					Description:        "Test",
+					IP:                 "127.0.0.1",
+					Type:               0,
+					Recommended:        0,
+					AllowedClientFlags: 0xFFFFFFFF,
+					Channels: []cfg.EntranceChannelInfo{
+						{
+							Port:       54001,
+							MaxPlayers: 100,
+						},
+					},
+				},
+			},
+		},
+		GameplayOptions: cfg.GameplayOptions{
 			ClanMemberLimits: [][]uint8{
 				{1}, // Only 1 element, code used to panic accessing [1]
 			},

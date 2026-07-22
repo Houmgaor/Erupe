@@ -1,11 +1,11 @@
 package mhfpacket
 
-import ( 
- "errors" 
+import (
+	"errors"
 
- 	"erupe-ce/network/clientctx"
-	"erupe-ce/network"
 	"erupe-ce/common/byteframe"
+	"erupe-ce/network"
+	"erupe-ce/network/clientctx"
 )
 
 // MsgMhfSetKiju represents the MSG_MHF_SET_KIJU
@@ -24,7 +24,6 @@ func (m *MsgMhfSetKiju) Parse(bf *byteframe.ByteFrame, ctx *clientctx.ClientCont
 	m.AckHandle = bf.ReadUint32()
 	m.Unk1 = bf.ReadUint16()
 	return nil
-	//panic("Not implemented")
 }
 
 // Build builds a binary packet from the current data.

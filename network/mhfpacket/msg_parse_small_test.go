@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"erupe-ce/common/byteframe"
+	cfg "erupe-ce/config"
 	"erupe-ce/network/clientctx"
 )
 
@@ -17,27 +18,19 @@ func TestParseSmallNotImplemented(t *testing.T) {
 	}{
 		// MHF packets - NOT IMPLEMENTED
 		{"MsgMhfAcceptReadReward", &MsgMhfAcceptReadReward{}},
-		{"MsgMhfAddRewardSongCount", &MsgMhfAddRewardSongCount{}},
 		{"MsgMhfDebugPostValue", &MsgMhfDebugPostValue{}},
-		{"MsgMhfEnterTournamentQuest", &MsgMhfEnterTournamentQuest{}},
 		{"MsgMhfGetCaAchievementHist", &MsgMhfGetCaAchievementHist{}},
 		{"MsgMhfGetCaUniqueID", &MsgMhfGetCaUniqueID{}},
-		{"MsgMhfGetDailyMissionMaster", &MsgMhfGetDailyMissionMaster{}},
-		{"MsgMhfGetDailyMissionPersonal", &MsgMhfGetDailyMissionPersonal{}},
-		{"MsgMhfGetExtraInfo", &MsgMhfGetExtraInfo{}},
 		{"MsgMhfGetRestrictionEvent", &MsgMhfGetRestrictionEvent{}},
 		{"MsgMhfKickExportForce", &MsgMhfKickExportForce{}},
 		{"MsgMhfPaymentAchievement", &MsgMhfPaymentAchievement{}},
-		{"MsgMhfPostRyoudama", &MsgMhfPostRyoudama{}},
 		{"MsgMhfRegistSpabiTime", &MsgMhfRegistSpabiTime{}},
 		{"MsgMhfResetAchievement", &MsgMhfResetAchievement{}},
 		{"MsgMhfResetTitle", &MsgMhfResetTitle{}},
 		{"MsgMhfSetCaAchievement", &MsgMhfSetCaAchievement{}},
-		{"MsgMhfSetDailyMissionPersonal", &MsgMhfSetDailyMissionPersonal{}},
 		{"MsgMhfSetUdTacticsFollower", &MsgMhfSetUdTacticsFollower{}},
 		{"MsgMhfStampcardPrize", &MsgMhfStampcardPrize{}},
 		{"MsgMhfUpdateForceGuildRank", &MsgMhfUpdateForceGuildRank{}},
-		{"MsgMhfUseUdShopCoin", &MsgMhfUseUdShopCoin{}},
 
 		// SYS packets - NOT IMPLEMENTED
 		{"MsgSysAuthData", &MsgSysAuthData{}},
@@ -50,22 +43,20 @@ func TestParseSmallNotImplemented(t *testing.T) {
 		{"MsgSysDeleteMutex", &MsgSysDeleteMutex{}},
 		{"MsgSysEnumlobby", &MsgSysEnumlobby{}},
 		{"MsgSysEnumuser", &MsgSysEnumuser{}},
-		{"MsgSysGetObjectBinary", &MsgSysGetObjectBinary{}},
 		{"MsgSysGetState", &MsgSysGetState{}},
 		{"MsgSysInfokyserver", &MsgSysInfokyserver{}},
 		{"MsgSysOpenMutex", &MsgSysOpenMutex{}},
-		{"MsgSysRotateObject", &MsgSysRotateObject{}},
 		{"MsgSysSerialize", &MsgSysSerialize{}},
 		{"MsgSysTransBinary", &MsgSysTransBinary{}},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tc := range packets {
 		t.Run(tc.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
 			// Write some padding bytes so Parse has data available if it tries to read.
 			bf.WriteUint32(0)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			err := tc.pkt.Parse(bf, ctx)
 			if err == nil {
@@ -88,7 +79,7 @@ func TestParseSmallNoData(t *testing.T) {
 		{"MsgSysUnreserveStage", &MsgSysUnreserveStage{}},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tc := range packets {
 		t.Run(tc.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
@@ -111,20 +102,20 @@ func TestParseSmallLogout(t *testing.T) {
 		{"max", 255},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
 			bf.WriteUint8(tt.unk0)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgSysLogout{}
 			err := pkt.Parse(bf, ctx)
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
-			if pkt.Unk0 != tt.unk0 {
-				t.Errorf("Unk0 = %d, want %d", pkt.Unk0, tt.unk0)
+			if pkt.LogoutType != tt.unk0 {
+				t.Errorf("Unk0 = %d, want %d", pkt.LogoutType, tt.unk0)
 			}
 		})
 	}
@@ -133,7 +124,7 @@ func TestParseSmallLogout(t *testing.T) {
 // TestParseSmallEnumerateHouse tests Parse for MsgMhfEnumerateHouse which reads
 // AckHandle, CharID, Method, Unk, lenName, and optional Name.
 func TestParseSmallEnumerateHouse(t *testing.T) {
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 
 	t.Run("no name", func(t *testing.T) {
 		bf := byteframe.NewByteFrame()
@@ -142,7 +133,7 @@ func TestParseSmallEnumerateHouse(t *testing.T) {
 		bf.WriteUint8(2)           // Method
 		bf.WriteUint16(100)        // Unk
 		bf.WriteUint8(0)           // lenName = 0 (no name)
-		bf.Seek(0, io.SeekStart)
+		_, _ = bf.Seek(0, io.SeekStart)
 
 		pkt := &MsgMhfEnumerateHouse{}
 		err := pkt.Parse(bf, ctx)
@@ -173,7 +164,7 @@ func TestParseSmallEnumerateHouse(t *testing.T) {
 		nameBytes := []byte("Test\x00")
 		bf.WriteUint8(uint8(len(nameBytes))) // lenName > 0
 		bf.WriteBytes(nameBytes)             // null-terminated name
-		bf.Seek(0, io.SeekStart)
+		_, _ = bf.Seek(0, io.SeekStart)
 
 		pkt := &MsgMhfEnumerateHouse{}
 		err := pkt.Parse(bf, ctx)
@@ -195,8 +186,102 @@ func TestParseSmallEnumerateHouse(t *testing.T) {
 	})
 }
 
+// TestParseSmallGetExtraInfoAndCogInfo tests that MsgMhfGetExtraInfo and
+// MsgMhfGetCogInfo correctly parse their AckHandle field.
+func TestParseSmallGetExtraInfoAndCogInfo(t *testing.T) {
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
+
+	t.Run("GetExtraInfo", func(t *testing.T) {
+		bf := byteframe.NewByteFrame()
+		bf.WriteUint32(0xDEADBEEF)
+		_, _ = bf.Seek(0, io.SeekStart)
+		pkt := &MsgMhfGetExtraInfo{}
+		if err := pkt.Parse(bf, ctx); err != nil {
+			t.Fatalf("Parse() error = %v", err)
+		}
+		if pkt.AckHandle != 0xDEADBEEF {
+			t.Errorf("AckHandle = 0x%X, want 0xDEADBEEF", pkt.AckHandle)
+		}
+	})
+
+	t.Run("GetCogInfo", func(t *testing.T) {
+		bf := byteframe.NewByteFrame()
+		bf.WriteUint32(0xCAFEBABE)
+		_, _ = bf.Seek(0, io.SeekStart)
+		pkt := &MsgMhfGetCogInfo{}
+		if err := pkt.Parse(bf, ctx); err != nil {
+			t.Fatalf("Parse() error = %v", err)
+		}
+		if pkt.AckHandle != 0xCAFEBABE {
+			t.Errorf("AckHandle = 0x%X, want 0xCAFEBABE", pkt.AckHandle)
+		}
+	})
+}
+
+// TestParseSmallRotateObject tests Parse for MsgSysRotateObject (ObjID + Rotation).
+func TestParseSmallRotateObject(t *testing.T) {
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
+	bf := byteframe.NewByteFrame()
+	bf.WriteUint32(0x1002)
+	bf.WriteFloat32(1.5707963)
+	_, _ = bf.Seek(0, io.SeekStart)
+
+	pkt := &MsgSysRotateObject{}
+	if err := pkt.Parse(bf, ctx); err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if pkt.ObjID != 0x1002 {
+		t.Errorf("ObjID = 0x%X, want 0x1002", pkt.ObjID)
+	}
+	if pkt.Rotation != 1.5707963 {
+		t.Errorf("Rotation = %v, want 1.5707963", pkt.Rotation)
+	}
+}
+
+// TestParseSmallGetObjectOwner tests Parse for MsgSysGetObjectOwner (AckHandle + ObjID).
+func TestParseSmallGetObjectOwner(t *testing.T) {
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
+	bf := byteframe.NewByteFrame()
+	bf.WriteUint32(0xAAAA)
+	bf.WriteUint32(0x1002)
+	_, _ = bf.Seek(0, io.SeekStart)
+
+	pkt := &MsgSysGetObjectOwner{}
+	if err := pkt.Parse(bf, ctx); err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if pkt.AckHandle != 0xAAAA {
+		t.Errorf("AckHandle = 0x%X, want 0xAAAA", pkt.AckHandle)
+	}
+	if pkt.ObjID != 0x1002 {
+		t.Errorf("ObjID = 0x%X, want 0x1002", pkt.ObjID)
+	}
+}
+
+// TestParseSmallGetObjectBinary tests Parse for MsgSysGetObjectBinary
+// (AckHandle + Unk0 + ObjID).
+func TestParseSmallGetObjectBinary(t *testing.T) {
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
+	bf := byteframe.NewByteFrame()
+	bf.WriteUint32(0xAAAA)
+	bf.WriteUint32(0)
+	bf.WriteUint32(0x1002)
+	_, _ = bf.Seek(0, io.SeekStart)
+
+	pkt := &MsgSysGetObjectBinary{}
+	if err := pkt.Parse(bf, ctx); err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if pkt.AckHandle != 0xAAAA {
+		t.Errorf("AckHandle = 0x%X, want 0xAAAA", pkt.AckHandle)
+	}
+	if pkt.ObjID != 0x1002 {
+		t.Errorf("ObjID = 0x%X, want 0x1002", pkt.ObjID)
+	}
+}
+
 // TestParseSmallNotImplementedDoesNotPanic ensures that calling Parse on NOT IMPLEMENTED
-// packets with a nil ClientContext does not cause a nil pointer dereference panic.
+// packets returns an error and does not panic.
 func TestParseSmallNotImplementedDoesNotPanic(t *testing.T) {
 	packets := []MHFPacket{
 		&MsgMhfAcceptReadReward{},
@@ -204,10 +289,11 @@ func TestParseSmallNotImplementedDoesNotPanic(t *testing.T) {
 		&MsgSysSerialize{},
 	}
 
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 	for _, pkt := range packets {
-		t.Run("nil_ctx", func(t *testing.T) {
+		t.Run("not_implemented", func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
-			err := pkt.Parse(bf, nil)
+			err := pkt.Parse(bf, ctx)
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}

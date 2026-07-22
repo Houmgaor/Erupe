@@ -1,27 +1,24 @@
-version: "3.9"
-# 1. docker-compose up db pgadmin
-# 2. Use pgadmin to restore db and also apply patch-schema
-# 3. Configure the config.json example. in docker you can point to the service name for the database i.e db
-# 4. In seperate terminal docker-compose up server
-# 5. If all went well happy hunting!
-services: 
+# 1. Copy config.example.json to docker/config.json and edit it
+#    (set Database.Host to "db", adjust password to match below)
+# 2. Place quest/scenario files in docker/bin/
+# 3. docker compose up
+services:
   db:
-    image: postgres
+    image: postgres:18-alpine
     environment:
-    # (Make sure these match config.json)
+      # Change this password and match it in docker/config.json
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=password
       - POSTGRES_DB=erupe
-    ports: 
+    ports:
       - "5432:5432"
     volumes:
-      - ./db-data/:/var/lib/postgresql/data/
-      - ../schemas/:/schemas/
-      - ./init/setup.sh:/docker-entrypoint-initdb.d/setup.sh
+      - ./db-data/:/var/lib/postgresql/
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
+      start_period: 5s
       retries: 5
   pgadmin:
     image: dpage/pgadmin4
@@ -44,16 +41,16 @@ services:
     # build:
     #   context: ../
     volumes:
-      - ../config.json:/app/erupe/config.json
-      - ../bin:/app/erupe/bin
-      - ./savedata:/app/erupe/savedata
+      - ./config.json:/app/config.json
+      - ./bin:/app/bin
+      - ./savedata:/app/savedata
     ports:
       # (Make sure these match config.json)
       - "53312:53312" #Sign V1
       - "8080:8080"   #Sign V2
       - "53310:53310" #Entrance
       # Channels
-      - "54001:54001" 
+      - "54001:54001"
       - "54002:54002"
       - "54003:54003"
       - "54004:54004"
@@ -61,13 +58,9 @@ services:
       - "54006:54006"
       - "54007:54007"
       - "54008:54008"
-  web:
-    image: httpd:latest
-    container_name: my-apache-app
-    ports:
-      - '80:80'
-    volumes:
-      - ./Servers:/usr/local/apache2/htdocs
-    depends_on:
-      db:
-        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 3

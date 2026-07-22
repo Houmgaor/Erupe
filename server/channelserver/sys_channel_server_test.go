@@ -1,13 +1,17 @@
 package channelserver
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
-	_config "erupe-ce/config"
+	"erupe-ce/common/decryption"
+	cfg "erupe-ce/config"
 	"erupe-ce/network/clientctx"
 	"erupe-ce/network/mhfpacket"
 
@@ -36,9 +40,11 @@ func (m *mockConn) RemoteAddr() net.Addr {
 	return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12345}
 }
 
-func (m *mockConn) Read(b []byte) (n int, err error)   { return 0, nil }
-func (m *mockConn) Write(b []byte) (n int, err error)  { return len(b), nil }
-func (m *mockConn) LocalAddr() net.Addr                { return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 54321} }
+func (m *mockConn) Read(b []byte) (n int, err error)  { return 0, nil }
+func (m *mockConn) Write(b []byte) (n int, err error) { return len(b), nil }
+func (m *mockConn) LocalAddr() net.Addr {
+	return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 54321}
+}
 func (m *mockConn) SetDeadline(t time.Time) error      { return nil }
 func (m *mockConn) SetReadDeadline(t time.Time) error  { return nil }
 func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil }
@@ -52,16 +58,14 @@ func (m *mockConn) WasClosed() bool {
 // createTestServer creates a test server instance
 func createTestServer() *Server {
 	logger, _ := zap.NewDevelopment()
-	return &Server{
-		ID:             1,
-		logger:         logger,
-		sessions:       make(map[net.Conn]*Session),
-		stages:         make(map[string]*Stage),
-		semaphore:      make(map[string]*Semaphore),
-		questCacheData: make(map[int][]byte),
-		questCacheTime: make(map[int]time.Time),
-		erupeConfig: &_config.Config{
-			DebugOptions: _config.DebugOptions{
+	s := &Server{
+		ID:         1,
+		logger:     logger,
+		sessions:   make(map[net.Conn]*Session),
+		semaphore:  make(map[string]*Semaphore),
+		questCache: NewQuestCache(0),
+		erupeConfig: &cfg.Config{
+			DebugOptions: cfg.DebugOptions{
 				LogOutboundMessages: false,
 				LogInboundMessages:  false,
 			},
@@ -73,21 +77,23 @@ func createTestServer() *Server {
 			support:  make([]uint32, 30),
 		},
 	}
+	s.Registry = NewLocalChannelRegistry([]*Server{s})
+	return s
 }
 
 // createTestSessionForServer creates a session for a specific server
 func createTestSessionForServer(server *Server, conn net.Conn, charID uint32, name string) *Session {
 	mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 	s := &Session{
-		logger:      server.logger,
-		server:      server,
-		rawConn:     conn,
-		cryptConn:   mock,
-		sendPackets: make(chan packet, 20),
+		logger:        server.logger,
+		server:        server,
+		rawConn:       conn,
+		cryptConn:     mock,
+		sendPackets:   make(chan packet, 20),
 		clientContext: &clientctx.ClientContext{},
-		lastPacket:  time.Now(),
-		charID:      charID,
-		Name:        name,
+		lastPacket:    time.Now(),
+		charID:        charID,
+		Name:          name,
 	}
 	return s
 }
@@ -98,8 +104,8 @@ func TestNewServer(t *testing.T) {
 	config := &Config{
 		ID:     1,
 		Logger: logger,
-		ErupeConfig: &_config.Config{
-			DebugOptions: _config.DebugOptions{},
+		ErupeConfig: &cfg.Config{
+			DebugOptions: cfg.DebugOptions{},
 		},
 		Name: "test-server",
 	}
@@ -126,7 +132,7 @@ func TestNewServer(t *testing.T) {
 	}
 
 	for _, stageID := range expectedStages {
-		if _, exists := server.stages[stageID]; !exists {
+		if _, exists := server.stages.Get(stageID); !exists {
 			t.Errorf("Default stage %s not initialized", stageID)
 		}
 	}
@@ -273,13 +279,26 @@ func TestBroadcastMHFAllSessions(t *testing.T) {
 	testPkt := &mhfpacket.MsgSysNop{}
 	server.BroadcastMHF(testPkt, nil)
 
-	time.Sleep(100 * time.Millisecond)
+	// Poll until all sessions have received the packet or the deadline is reached.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		receivedCount := 0
+		for _, sess := range server.sessions {
+			mock := sess.cryptConn.(*MockCryptConn)
+			if mock.PacketCount() > 0 {
+				receivedCount++
+			}
+		}
+		if receivedCount == sessionCount {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 
 	// Stop all sessions
 	for _, sess := range sessions {
 		sess.closed.Store(true)
 	}
-	time.Sleep(50 * time.Millisecond)
 
 	// Verify all sessions received the packet
 	receivedCount := 0
@@ -298,7 +317,7 @@ func TestBroadcastMHFAllSessions(t *testing.T) {
 // TestFindSessionByCharID tests finding sessions by character ID
 func TestFindSessionByCharID(t *testing.T) {
 	server := createTestServer()
-	server.Channels = []*Server{server} // Add itself as a channel
+	server.Registry = NewLocalChannelRegistry([]*Server{server})
 
 	// Create sessions with different char IDs
 	charIDs := []uint32{100, 200, 300}
@@ -683,9 +702,7 @@ func TestFindObjectByChar(t *testing.T) {
 	stage.objects[1] = obj1
 	stage.objects[2] = obj2
 
-	server.stagesLock.Lock()
-	server.stages["test_stage"] = stage
-	server.stagesLock.Unlock()
+	server.stages.Store("test_stage", stage)
 
 	tests := []struct {
 		name      string
@@ -725,5 +742,67 @@ func TestFindObjectByChar(t *testing.T) {
 				t.Errorf("Found object ID = %d, want %d", obj.id, tt.wantObjID)
 			}
 		})
+	}
+}
+
+// --- loadRengokuBinary tests ---
+
+func TestLoadRengokuBinary_ValidECD(t *testing.T) {
+	dir := t.TempDir()
+	// Build a minimal valid ECD file: magic + some payload
+	data := make([]byte, 16)
+	binary.LittleEndian.PutUint32(data[:4], decryption.ECDMagic)
+	if err := os.WriteFile(filepath.Join(dir, "rengoku_data.bin"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	logger, _ := zap.NewDevelopment()
+	result := loadRengokuBinary(dir, logger)
+
+	if result == nil {
+		t.Fatal("Expected non-nil result for valid ECD file")
+	}
+	if len(result) != 16 {
+		t.Errorf("len = %d, want 16", len(result))
+	}
+}
+
+func TestLoadRengokuBinary_MissingFile(t *testing.T) {
+	dir := t.TempDir()
+	logger, _ := zap.NewDevelopment()
+	result := loadRengokuBinary(dir, logger)
+
+	if result != nil {
+		t.Errorf("Expected nil for missing file, got %d bytes", len(result))
+	}
+}
+
+func TestLoadRengokuBinary_TooSmall(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rengoku_data.bin"), []byte{0x65, 0x63}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	logger, _ := zap.NewDevelopment()
+	result := loadRengokuBinary(dir, logger)
+
+	if result != nil {
+		t.Errorf("Expected nil for too-small file, got %d bytes", len(result))
+	}
+}
+
+func TestLoadRengokuBinary_BadMagic(t *testing.T) {
+	dir := t.TempDir()
+	data := make([]byte, 16)
+	binary.LittleEndian.PutUint32(data[:4], 0xDEADBEEF)
+	if err := os.WriteFile(filepath.Join(dir, "rengoku_data.bin"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	logger, _ := zap.NewDevelopment()
+	result := loadRengokuBinary(dir, logger)
+
+	if result != nil {
+		t.Errorf("Expected nil for bad magic, got %d bytes", len(result))
 	}
 }

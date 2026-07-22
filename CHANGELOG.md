@@ -7,49 +7,311 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Removed
 
-- Alpelo object system backport functionality
-- Better config file handling and structure
-- Comprehensive production logging for save operations (warehouse, Koryo points, savedata, Hunter Navi, plate equipment)
-- Disconnect type tracking (graceful, connection_lost, error) with detailed logging
-- Session lifecycle logging with duration and metrics tracking
-- Structured logging with timing metrics for all database save operations
-- Plate data (transmog) safety net in logout flow - adds monitoring checkpoint for platedata, platebox, and platemyset persistence
+- `stable/v9.2.x` branch and its `SECURITY.md` supported-version entry — the branch had been untouched since 2026-02-08 and 9.2.x is well past the current 9.4.x release line.
+
+## [9.4.1] - 2026-07-15
 
 ### Changed
 
-- Updated minimum Go version requirement from 1.23 to 1.25
-- Improved config handling
-- Refactored logout flow to save all data before cleanup (prevents data loss race conditions)
-- Unified save operation into single `saveAllCharacterData()` function with proper error handling
-- Removed duplicate save calls in `logoutPlayer()` function
+- Default `LoginNotices` banner (`config.reference.json`) now reads "9.4.1" instead of the stale "SU9.3".
+- Default `LoginNotices` banner bullet points: "Report bugs on Discord" → "Get help on Discord", "Fork the code on GitHub" → "Find the code on Mezeporta/Erupe (GitHub)", dropped "Test everything", added a "Maintained with love by the Mogapedia and Mezeporta communities" closing line, and reworded the intro from "Erupe is experimental software" to "Erupe is a community implementation for the Frontier server".
+
+### Added
+
+- `DebugOptions.QuestTools`'s `MSG_SYS_CAST_BINARY` quest-payload logging now also dumps the full raw hex (plus sender char ID) alongside the existing best-effort XYZ decode, so the real struct layout can be read directly instead of guessed. Used this to confirm the payload bundles one position record per party slot (player + AI companions), each tagged with an incrementing slot ID — the existing fixed-offset decode was only ever reading slot 1.
+
+### Removed
+
+- Orphaned `schemas/bundled-schema/` directory, superseded by `server/migrations/seed/` and drifted out of sync with it; also its dead volume mount in `docker/docker-compose.test.yml`.
+- Orphaned root-level `savedata/` placeholder directory (unused by any code path); also its `cp` step in `release.yml` and its `.gitignore` rule.
+- Stale `www/` references (`.gitignore`, `Dockerfile` comment, CI artifact upload) left over from the removed LauncherServer, plus the never-present `config.json` from the same CI artifact list.
 
 ### Fixed
 
-- Config file handling and validation
-- Fixes 3 critical race condition in handlers_stage.go.
-- Fix an issue causing a crash on clans with 0 members.
-- Fixed deadlock in zone change causing 60-second timeout when players change zones
-- Fixed crash when sending empty packets in QueueSend/QueueSendNonBlocking
-- Fixed missing stage transfer packet for empty zones
-- Fixed save data corruption check rejecting valid saves due to name encoding mismatches (SJIS/UTF-8)
-- Fixed incomplete saves during logout - character savedata now persisted even during ungraceful disconnects
-- Fixed double-save bug in logout flow that caused unnecessary database operations
-- Fixed save operation ordering - now saves data before session cleanup instead of after
-- Fixed stale transmog/armor appearance shown to other players - user binary cache now invalidated when plate data is saved
-- Fixed client crash when quest or scenario files are missing - now sends failure ack instead of nil data
-- Fixed server crash when Discord relay receives messages with unsupported Shift-JIS characters (emoji, Lenny faces, cuneiform, etc.)
-- Fixed data race in token.RNG global used concurrently across goroutines
+- `DebugOptions.QuestTools`'s `Coord` debug line blindly read a fixed offset (20) of the `MSG_SYS_CAST_BINARY` quest payload regardless of what was actually there, silently aliasing a different entity's own position field whenever the payload wasn't a plain party-slot message. Now locates party slot 1's record explicitly by its own ID tag before decoding XYZ from it.
+- `DebugOptions.DivaOverride` had no registered default, so it fell back to Go's zero value (`0`) — which the diva handler treats as "force an empty/inactive schedule", not neutral. Diva Defense appeared completely absent to players on any server that didn't explicitly set it to `-1`. Default is now `-1`, matching `FestaOverride`.
+- `common/decryption.UnpackSimple` only implemented JPK type 3 (LZ) decompression; type 4 (HFI: Huffman+LZ) payloads were returned unchanged, so `rengoku_data.bin` files built with HFI compression failed structural validation at startup (`rengoku: invalid magic 4a 4b 52 1a` — the untouched JKR container header) even though the raw file was still served correctly to clients. Added an HFI decoder so the startup summary (floor/spawn-table/monster counts) now parses correctly for both compression types.
+- `ParseQuestBinary`/`CompileQuestJSON` treated a reward table's item-list pointer as relative to the reward section, but every retail quest binary stores it as an absolute file offset — `parseRewardTables` overshot past EOF on every single retail `.bin` (`reward item list truncated`), making JSON conversion of retail quests impossible. Parser and builder now agree on absolute offsets, matching `questfile.bin.hexpat`.
+- `ParseQuestBinary` read large monster spawns directly from `largeMonsterPtr` as a variable-length, 0xFF-terminated list. Retail actually stores a fixed 16-byte pointer block there (8 bytes header + absolute pointers to a 5-slot ID array and a 5-slot 60-byte spawn array, per `questfile.bin.hexpat`'s `largeMonsterPointers`). Reading the wrong region either truncated outright or silently produced nonsense spawn data (e.g. `spawn_amount` in the billions) on almost every retail quest that "succeeded". Parser and builder (capped at 5 slots, matching retail) now agree on the real layout.
+- `ParseQuestBinary` aborted the entire quest parse if any of the 8 optional quest-text pointers (title/description/success-fail conditions/etc.) was unreadable. A handful of retail quests (arena-style quests with no day/night variant, e.g. `64551`/`64552`) leave some of those slots holding non-pointer leftover data instead of a clean `0`. Such a slot is now treated as "no text" instead of failing the whole quest, the same way a literal null pointer already is.
+
+## [9.4.0] - 2026-07-13
+
+### Added
+
+- Reverse-engineered user binary data types from `mhfo-hd.dll` via Ghidra: type 1 = character name (max 17B SJIS), type 2 = player profile with self-introduction (208B), type 3 = equipment/appearance snapshot (384B). Added structured parsing with size validation warnings to `handleMsgSysSetUserBinary`.
+- French (`fr`) and Spanish (`es`) server language translations. Set `"Language": "fr"` or `"Language": "es"` in `config.json` to activate.
+- `TestLangCompleteness` uses reflection to verify that every string field in `i18n` is populated for all registered languages — catches missing translations at CI time rather than silently serving empty strings in-game.
+- Server-generated strings (commands, mail templates, Raviente announcements, Diva bead names, guild names) are now split into one file per language (`lang_en.go`, `lang_jp.go`, etc.). Adding a new language requires only a single self-contained file and a one-line registration in `getLangStrings` ([#185](https://github.com/Mezeporta/Erupe/issues/185)).
+- Hunting Tournament system: all six tournament handlers are now fully implemented and DB-backed. `MsgMhfEnterTournamentQuest` (0x00D2) wire format was derived from `mhfo-hd.dll` binary analysis. Schedule, cups, sub-events, player registrations, and run submissions are stored in five new tables. `EnumerateRanking` returns the active tournament schedule with phase-state computation; `EnumerateOrder` returns per-event leaderboards ranked by submission time. `TournamentDefaults.sql` seeds cup and sub-event data from live tournament #150. One field (`Unk2` / event_id mapping) remains unconfirmed pending a packet capture ([#184](https://github.com/Mezeporta/Erupe/issues/184)). Database migration `0021_tournament` (`tournaments`, `tournament_cups`, `tournament_sub_events`, `tournament_entries`, `tournament_results`).
+- Return/Rookie Guild system: new players are automatically placed in a temporary rookie guild (`return_type=1`) and returning players in a comeback guild (`return_type=2`) via `MSG_MHF_ENTRY_ROOKIE_GUILD`. Players graduate (leave) via `OperateGuildGraduateRookie`/`OperateGuildGraduateReturn`. Guild info response now reports `isReturnGuild` correctly. Database migration `0020_return_guilds` adds `return_type` to the `guilds` table.
+- `saveutil` admin CLI (`cmd/saveutil/`): `import`, `export`, `grant-import`, and `revoke-import` commands for transferring character save data between server instances without touching the database manually.
+- `POST /v2/characters/{id}/import` API endpoint: player-facing save import gated behind a one-time admin-granted token (generated by `saveutil grant-import`). Token expires after a configurable TTL (default 24 h).
+- Database migration `0019_save_transfer`: adds `savedata_import_token` and `savedata_import_token_expiry` columns to the `characters` table.
+- Guild scout invitations now use a dedicated `guild_invites` table (migration `0018_guild_invites`), giving each invitation a real serial PK; the scout list response now returns accurate invite IDs and timestamps, and `CancelGuildScout` uses the correct PK instead of the character ID.
+- Event Tent (campaign) system: code redemption, stamp tracking, reward claiming, and quest gating for special event quests, backed by 8 new database tables and seeded with community-researched live-game campaign data ([#182](https://github.com/Mezeporta/Erupe/pull/182), by stratick).
+- Database migration `0016_campaign` (campaigns, campaign_categories, campaign_category_links, campaign_rewards, campaign_rewards_claimed, campaign_state, campaign_codes, campaign_quest).
+- JSON Hunting Road config: `bin/rengoku_data.json` is now supported as a human-readable alternative to the opaque `rengoku_data.bin` — the server assembles and ECD-encrypts the binary at startup, with `.bin` used as a fallback ([#173](https://github.com/Mezeporta/Erupe/issues/173)).
+- JSON scenario files: `.json` files in `bin/scenarios/` are now supported alongside `.bin` — the server tries `.bin` first, then compiles `.json` on demand. Supports sub-header chunks (flags 0x01/0x02, strings UTF-8 → Shift-JIS, opaque metadata preserved as base64), inline episode listings (flag 0x08), and raw JKR blob chunks (flags 0x10/0x20) ([#172](https://github.com/Mezeporta/Erupe/issues/172)). A `ParseScenarioBinary` function allows existing `.bin` files to be exported to JSON. Fixed off-by-one in JPK decompressor that caused the last literal byte to be dropped.
+- JKR type-3 (LZ77) compressor added (`common/decryption.PackSimple`), the inverse of `UnpackSimple`, ported from ReFrontier `JPKEncodeLz.cs` ([#172](https://github.com/Mezeporta/Erupe/issues/172)).
+- JSON quest files: `.json` files in `bin/quests/` are now supported alongside `.bin` — the server tries `.bin` first (full backward compatibility), then compiles `.json` on the fly to the MHF binary wire format ([#160](https://github.com/Mezeporta/Erupe/issues/160)). Covers all binary sections: quest text (UTF-8 → Shift-JIS), all 12 objective types, monster spawns (large + minion), reward tables, supply box, loaded stages, rank requirements, variant flags, forced equipment, map sections, area transitions, coordinate mappings, map info, gathering points, gathering tables, and area facilities. A `ParseQuestBinary` reverse function allows existing `.bin` files to be inspected and exported to JSON.
+- Diva Defense (UD) system: full implementation of prayer bead selection, point accumulation, interception mechanics, and reward tracking. Adds 4 new tables (`diva_beads`, `diva_beads_assignment`, `diva_beads_points`, `diva_prizes`) and columns for guild/character interception state. Seeded with 26 prize milestones for personal and guild reward tracks. Packet handlers corrected against mhfo-hd.dll RE findings: `GetKijuInfo` (546 bytes/entry with color_id and bead_type), `GetUdMyPoint` (8×18-byte entries, no count prefix), `GetUdTotalPointInfo` (u64[64] thresholds + u8[64] types + u64 total), `GetUdSelectedColorInfo` (9 bytes), present/reward list formats, `GetRewardSong` (22-byte layout), and `AddRewardSongCount` parse (was NOT IMPLEMENTED stub). EN/JP bead names for all 18 bead types. Original system design by wish, with contributions from stratic-dev, Samboge, Re-Nest, and Houmgaor (feature/diva branch). Supplemental RE documentation by ezemania2.
+- Database migration `0017_diva` (bead pool, assignments, points log, prizes, interception columns).
+- `cmd/positiontap`: a passive TCP MITM tool for the channel-server crypto stream that logs parsed `MSG_SYS_POSITION_OBJECT`/`MSG_SYS_CAST_BINARY` position data to JSONL without modifying packets, for cross-checking position intent against client memory during RE work.
+- Real DB-backed Caravan/Ryoudama points and personal ranking (`CaravanRepository`, migration `0025_caravan`): `handleMsgMhfGetRyoudama` now returns actual per-character points and a real personal ranking list instead of hardcoded zero/empty data. Opcodes and request-builder addresses confirmed via `mhfo-hd.dll` RE; response wire format for `CaravanMyScore`/`CaravanRanking`/`CaravanMyRank` remains unconfirmed and those three intentionally still return an empty ACK rather than guess a possibly-crashing payload. Point-awarding is not yet wired to quest completion — caravan quests may load from a separate, unimplemented quest source (`ryoudan\quest.bin`), so no `quest_type` trigger could be confirmed.
+- Parse and write zenny, gzenny and caravan points (CP) in the ZZ character save blob (offsets 0xB0, 0x1FF64, 0x212E4 — sourced from Chakratos/mhf-save-manager, validated against a live HR999 save). Exposed as `CharacterSaveData.Zenny/GZenny/CP` alongside the existing `current_equip` pointer. Write path is byte-idempotent (verified against a live blob). Pre-ZZ modes remain unmapped to avoid corrupting unverified layouts.
+- Chinese (`zh`) language strings for chat commands, guild mails, cafe/timer broadcasts and prayer beads. Note: Shift-JIS wire encoding only covers characters shared with Japanese — simplified-only glyphs may fail to encode.
+- Server-side multi-language support ([#188](https://github.com/Mezeporta/Erupe/issues/188)): each player picks their own language with `!lang <en|jp|fr|es|zh>`, persisted per user (migration `0022_user_language`) and loaded on login. Chat replies, guild invite mails, and cafe/timer broadcasts are served in that language via `Session.I18n()`. Quest and scenario JSON text fields now accept either a plain string (unchanged) or a `{"jp":"...","en":"...","fr":"..."}` map; the compiler resolves per session and the quest cache is keyed by `(questID, lang)`. Existing single-language JSONs and `.bin` round-trips remain byte-identical. Shift-JIS wire encoding still applies (ASCII/kana/CJK only). Raviente world-wide broadcasts stay on the server default since they have no single session.
+- `GET /v2/server/info` REST endpoint for launcher compatibility checks: returns the server's configured `clientMode` (raw, e.g. `G10.1`) and a `manifestId` normalized to match `mhf-outpost` manifest IDs (lowercase, dots stripped, e.g. `g101`), so launcher tools can warn users before connecting with a mismatched client version. No auth required.
+
+### Changed
+
+- Shutdown now proceeds in three phases: listeners close immediately on signal, then a passive drain waits up to `ShutdownDrainSeconds` (default 30) for sessions to disconnect naturally, then remaining connections are force-closed. This prevents players from starting new quests after the countdown begins ([#179](https://github.com/Mezeporta/Erupe/issues/179)).
+- Renamed config field `DisableSoftCrash` → `DisableShutdownCountdown` for clarity. The old key is still accepted via a Viper alias so existing `config.json` files keep working without modification ([#179](https://github.com/Mezeporta/Erupe/issues/179)).
+
+### Fixed
+
+- Fixed backup recovery panic: `recoverFromBackups` now rejects decompressed backup data smaller than the minimum save layout size, preventing a slice-bounds panic when nullcomp passes through garbage bytes as "already decompressed" data ([#182](https://github.com/Mezeporta/Erupe/pull/182)).
+- Dashboard channel ports now reflect the actual configured `Entrance.Entries[].Channels[].Port` instead of a hardcoded `54000 + server_id`.
+- Fixed save-time panic and character rollback on Forward.5 / Forward.4 / Season 6.0 clients: bookshelf was introduced after Forward.5 (verified against the F5 client binary), so the configured pointers overshoot the smaller save blob. The bookshelf read is now bounds-checked and skipped when absent; persistence via house packets is unaffected.
+- `makeEventQuest` unconditionally cleared the Interception bit (Quest Variant 3, bit 6) on every quest sent to the client, blocking all Diva Defense interception quests even though the server has real support for them (`handlers_tactics.go`). The flag is now only cleared for quests whose `quest_type` isn't 46/47/48 (`isDivaDefenseQuestType`), verified against every ripped 58xxx quest_id in `EventQuests.sql`. A follow-up fix widened `handlers_tactics.go`'s own `udTacticsQuestMin/Max` bounds from 58079-58083 (one event batch) to 58043-58128 (all 65 rows) — the initial fix only covered a fifth of the real interception quests.
+- Road shop (Hunter's Road) item 9958 was seeded with `cost=20, quantity=1` and a stray value in the unrelated `road_fatalis` column instead of the intended bulk pricing of 999 for 1 Road Point. Fixed in the seed data and via migration `0024_fix_road_shop_item_9958`, which also corrects the value already present on deployed databases.
+- `0002_catch_up_patches.sql` had two `→` (U+2192) characters in comments, which aren't representable in the WIN1252 codepage and made the embedded migration fail outright (`invalid byte sequence for encoding "WIN1252"`) on any Postgres cluster not initialized as UTF-8. Replaced both with plain ASCII `->` ([#198](https://github.com/Mezeporta/Erupe/issues/198)).
+- `handleMsgMhfEnumerateQuest` wrote back `pkt.Offset` unchanged as the next-page offset instead of `pkt.Offset + returnedCount`. Once `event_quests` needed a second page (574 rows, page boundary at offset 512), the ZZ client kept re-requesting the same offset forever, hanging on a black screen at login ([#194](https://github.com/Mezeporta/Erupe/issues/194)).
+- All quest counters (Caravan, Winners, normal) crashed the ZZ client when a tournament row had non-positive timestamps: `EnumerateRanking` emitted `state=3` with zero start/end times, which the client refuses to parse. `tournamentState` and the `EnumerateRanking`/`InfoTournament`/`EntryTournament` handlers now treat any tournament with a non-positive timestamp the same as no active tournament. `TournamentRepository.GetActive` filters such rows at the source, and migration `0023_tournament_timestamp_checks` deletes any pre-existing bad rows and adds CHECK constraints so they cannot reappear ([#193](https://github.com/Mezeporta/Erupe/issues/193)).
+- Loading your own house crashed the ZZ client when `house_furniture` was still `NULL` (any never-decorated character): `handleMsgMhfLoadHouse` filled in a 20-zero-byte placeholder the client can't parse. `Destination=9` now returns a failed ACK instead of that placeholder ([#192](https://github.com/Mezeporta/Erupe/issues/192)).
+- Entering the forge softlocked the client when a `ShopType=10` (item shop) tab had too many rows: the client's tab renderer crashes well below the 512-row `Limit` it advertises (~420 rows reproduced it). `handleMsgMhfEnumerateShop` now caps `ShopType=10` rows to a conservative, unbisected 256 regardless of the requested limit; other shop types are unaffected ([#190](https://github.com/Mezeporta/Erupe/issues/190)).
+- `handleMsgMhfPostRyoudama` sent no ACK at all (empty stub), a likely softlock for any client awaiting the response. Now parses `AckHandle` and always acknowledges; the request payload's remaining fields are still unconfirmed, so no client-submitted values are trusted.
+- Three of the 70 empty handlers tracked in [#181](https://github.com/Mezeporta/Erupe/issues/181) implemented from live-traffic evidence and existing sibling code, rather than guessed: `handleMsgSysHideClient` now stores the client's hide/show request on the session and `MsgSysEnumerateClient`'s "All" enumeration skips hidden sessions (confirmed via a live capture: the real client sends this opcode after closing a lobby item box); `handleMsgSysDeleteObject` removes the sender's own synced stage object and re-broadcasts the deletion, mirroring the identical remove-then-broadcast pattern the server already runs on stage-leave (`removeSessionFromStage`); `handleMsgMhfGetUdTacticsLog` now sends an empty-result ACK instead of no reply at all — it carries an `AckHandle` so the prior silence was a client softlock, not just a missing feature, and the real log entry format is still unknown so an empty result was used rather than a fabricated layout (same convention as `handleMsgMhfGetUdTacticsRemainingPoint`). A further ~8 stubs in the same audit (`MsgSysAck`, `MsgSysUpdateRight`, `MsgSysCleanupObject`, `MsgSysNotifyUserBinary`, `MsgSysNotifyRegister`, `MsgSysStageDestruct`, `MsgSysCastedBinary`, `MsgSysDeleteUser`/`MsgSysInsertUser`) were investigated and found to already be fully handled via existing server-initiated send paths — their inbound handler is unreachable in real play, so the stub there is inert rather than a gap. The remaining ~59 stubs have no known wire format at all (`Parse`/`Build` both return `"NOT IMPLEMENTED"`) and need a live capture before they can be implemented safely.
+- `MsgSysRotateObject`, `MsgSysGetObjectOwner`, and `MsgSysGetObjectBinary` ([#181](https://github.com/Mezeporta/Erupe/issues/181)) implemented by decompiling the PC client's own dispatch handlers for these opcodes (`mhfo-hd.dll`, addresses catalogued in `docs/network_protocol.md`'s PC Client Dispatch Table), since none of the three ever appeared in a live capture despite a full play session. `handleMsgSysRotateObject` mirrors `handleMsgSysPositionObject` (update the sender's synced object, re-broadcast to the stage); `handleMsgSysGetObjectOwner` resolves the real owning `CharID` from the stage's object map; `handleMsgSysGetObjectBinary` acks a zero-length result, matching the client's own graceful fallback when its local lookup misses (Erupe doesn't persist per-object binary payloads yet). Also confirmed `MsgSysAddObject`/`MsgSysDelObject`/`MsgSysDispObject`/`MsgSysHideObject` (opcodes 0x08-0x0B) are dead code: the client's dispatch table routes them to its shared no-op default handler, so the real client never sends or processes them.
+- `GuildRepository.CreateHunt` crashed CI after the `lib/pq` bump: v1.10.9 silently encoded a nil `[]byte` bound to a `bytea` parameter as an empty value, but v1.12.3 correctly encodes it as SQL `NULL` (`conn.go`'s `sendBinaryParameters` gained an explicit nil-slice check), which the `guild_hunts.hunt_data bytea NOT NULL` column then rejects. `CreateHunt` now normalizes a nil `huntData` to an empty slice before the insert, matching the same nil-vs-empty-bytea handling already established for `LoadColumnWithDefault` (see the 9.3.2 gacha-item fix). Production callers (`handlers_guild_tresure.go`) always pass real hunt data and were never affected; only the direct-nil test call sites in `repo_guild_test.go` hit this.
 
 ### Security
 
-- Bumped golang.org/x/net from 0.33.0 to 0.38.0
-- Bumped golang.org/x/crypto from 0.31.0 to 0.35.0
+- Bumped `golang.org/x/crypto` v0.51.0 → v0.54.0, closing 13 Dependabot-flagged advisories in the (unused-by-us) `x/crypto/ssh` subpackage — none reachable from our code per `govulncheck`, but the dependency itself is now current. `golang.org/x/net`, `golang.org/x/sys`, and `golang.org/x/text` bumped alongside for consistency.
+- Updated other direct dependencies to their latest compatible versions: `discordgo` v0.27.1 → v0.29.0, `sqlx` v1.3.5 → v1.4.0, `lib/pq` v1.10.9 → v1.12.3, `viper` v1.17.0 → v1.21.0, `zap` v1.26.0 → v1.28.0. Full build, `go vet`, `golangci-lint`, and `go test -race ./...` all pass unchanged after the bump.
 
-## Removed
+## [9.3.2] - 2026-04-06
 
-- Compatibility with Go 1.21 removed.
+### Added
+
+- `protbot` gains `--action boost` and `--action gacha` scenarios for non-destructive live-server regression testing of #187 and #175 fixes. `gacha --roll` opts in to actually rolling a paid gacha.
+
+### Fixed
+
+- Fixed empty-bytea crash in `MSG_MHF_RECEIVE_GACHA_ITEM` ([#175](https://github.com/Mezeporta/Erupe/issues/175)): `LoadColumnWithDefault` now treats an empty bytea (`'\x'`, length 0) the same as NULL. The postgres driver returns a non-nil empty slice for empty bytea, which previously reached the client as a zero-byte ACK payload. The ZZ client reads the first byte as the item count and iterates without bounds-checking the buffer length, so any `characters.gacha_items = '\x'::bytea` row crashed the gacha menu with garbage-count buffer overruns. RTTI-confirmed against `FUN_114fb410` (`CSync_man::putReceive_gacha_item`) and its caller `FUN_11531e90` — see `docs/re_notes/recv_gacha_item_crash.md` in the mhfrontier docs.
+- Logged and skipped `gacha_items` rows that fail to `StructScan` in `GachaRepository.GetItemsForEntry`/`GetGuaranteedItems`, with a warn pointing at `item_type > 255` or `item_id/quantity > 65535` as the likely cause. Previously these rows were silently dropped, making misconfigured gacha tables impossible to diagnose without a DB dump.
+- Fixed `handleMsgMhfGetBoostTimeLimit` sending a stray second ACK (`doAckSimpleSucceed`) on the same ack handle after its real `doAckBufSucceed`. Harmless in practice but a latent protocol bug.
+- Fixed `GetBoostTimeLimit` wrapping pre-1970 `boost_time` values through a naked `uint32(int64)` cast, which produced huge future-looking timestamps the client interpreted as permanently active. Added a past-time guard harmonised with `GetBoostRight`, and a healing migration `0011_fix_stale_boost_time` that NULLs out any `boost_time` column older than 1970 or more than 10 years in the future — residue of the pre-#187 bug observed on live servers (year-1906 rows).
+- Added migration `0010_fix_zero_rasta_id` to heal characters whose `rasta_id` was clobbered to `0` by the pre-fix `SaveMercenary` bug ([#163](https://github.com/Mezeporta/Erupe/issues/163)). Sets `rasta_id = NULL` for affected rows so silent save failures auto-resolve on upgrade.
+- Fixed quest tune-value filter silently dropping user-configured multipliers set to `0.0`: previously setting e.g. `ZennyMultiplier: 0.0` would strip the entry from the table and fall back to the client's default (100%), producing the opposite of the intended "no zenny" configuration. The `Value > 0` filter in `handleMsgMhfEnumerateQuest` has been removed so zero values are now sent verbatim. Affects HRP/SRP/GRP/GSRP/Zenny/GZenny/Material/GMaterial/GCP/GUrgent multipliers and their NC variants.
+- Fixed float32 truncation in quest multiplier conversion: `uint16(0.20 * 100)` yielded `19` instead of `20` because `float32(0.20) ≈ 0.19999998`. Replaced with a `multiplierToTuneValue` helper that rounds via `math.Round`. Applied to all 18 multiplier call sites.
+- Fixed `DisableLoginBoost` and `DisableBoostTime` config flags not fully honored ([#187](https://github.com/Mezeporta/Erupe/issues/187)): `GetBoostTimeLimit`/`GetBoostRight` now respect `DisableBoostTime` and `UseKeepLoginBoost` now respects `DisableLoginBoost`. Also fixes a zero-`time.Time` wraparound in `GetBoostTimeLimit` that made the "Boost Time" overlay appear on fresh characters.
+- Fixed playtime regression across sessions: `updateSaveDataWithStruct` now writes the accumulated playtime back into the binary save blob, preventing each reconnect from loading a stale in-game counter and rolling back progress.
+- Fixed player softlock when buying items at the forge: `MSG_CA_EXCHANGE_ITEM` `Parse()` was returning `NOT IMPLEMENTED`, causing the dispatch loop to drop the packet without sending an ACK. Now parses the `AckHandle` and responds with `doAckBufFail` so the client's error branch exits cleanly.
+- Fixed player softlock on N-points (Hunting Road) interactions: same root cause for `MSG_MHF_USE_UD_SHOP_COIN` — `Parse()` now reads the `AckHandle` and responds with `doAckBufFail`.
+
+## [9.3.1] - 2026-03-23
+
+### Added
+
+- `DisableSaveIntegrityCheck` config flag: when `true`, the SHA-256 savedata integrity check is skipped on load.
+Intended for cross-server save transfers where the stored hash in the database does not match the imported save blob.
+Defaults to `false`.
+Affected characters can alternatively be unblocked per-character with `UPDATE characters SET savedata_hash = NULL WHERE id = <id>`.
+
+## [9.3.0] - 2026-03-19
+
+### Fixed
+
+- Fixed G-rank Workshop and Master Felyne (Cog) softlock: `MSG_MHF_GET_EXTRA_INFO` and `MSG_MHF_GET_COG_INFO` now parse correctly and return a fail ACK instead of dropping the packet silently ([#180](https://github.com/Mezeporta/Erupe/issues/180))
+- A second SIGINT/Ctrl+C during the shutdown countdown now force-stops the server immediately
+- Fixed `ecdMagic` constant byte order causing encryption failures on some platforms ([#174](https://github.com/Mezeporta/Erupe/issues/174))
+- Fixed guild nil panics: variable shadowing causing nil panic in scout list ([#171](https://github.com/Mezeporta/Erupe/issues/171))
+- Fixed guild nil panics: added nil guards in cancel and answer scout handlers ([#171](https://github.com/Mezeporta/Erupe/issues/171))
+- Fixed guild nil panics: added nil guards for alliance guild lookups ([#171](https://github.com/Mezeporta/Erupe/issues/171))
+- Fixed `rasta_id=0` overwriting NULL in mercenary save, preventing game state saving ([#163](https://github.com/Mezeporta/Erupe/issues/163))
+- Fixed false race condition in `PacketDuringLogout` test
+- Fixed bookshelf save data pointers for non-ZZ client versions (G1–G10, F4–F5, S6.0)
+- Fixed Forward.5 festa crashes: skip trials referencing monsters added after em106 (Odibatorasu) and filter out item 7011 which does not exist before G1 ([#156](https://github.com/Mezeporta/Erupe/pull/156))
+
+### Changed
+
+- Cached `rengoku_data.bin` at startup for improved channel server performance
+
+### Added
+
+- Achievement rank-up notifications: the client now shows rank-up popups when achievements level up, using per-character tracking of last-displayed levels ([#165](https://github.com/Mezeporta/Erupe/issues/165))
+- Database migration `0008_achievement_displayed_levels` (tracks last-displayed achievement levels)
+- Diva Defense point accumulation: `MsgMhfAddUdPoint` now stores per-character quest and bonus points in a dedicated `diva_points` table, RE'd from the ZZ client DLL ([#168](https://github.com/Mezeporta/Erupe/issues/168))
+- Database migration `0009_diva_points` (per-character per-event point tracking)
+- Savedata corruption defense (tier 1): bounded decompression in nullcomp prevents OOM from crafted payloads, bounds-checked delta patching prevents buffer overflows, compressed payload size limits (512KB) and decompressed size limits (1MB) reject oversized saves, rotating savedata backups (3 slots, 30-minute interval) provide recovery points
+- Savedata corruption defense (tier 2): SHA-256 checksum on decompressed savedata verified on every load, atomic DB transactions wrapping character data + house data + hash + backup in a single commit, per-character save mutex preventing concurrent save races
+- Database migration `0007_savedata_integrity` (rotating backup table + integrity checksum column)
+- Tests for `logoutPlayer`, `saveAllCharacterData`, and transit message handlers
+- Alliance `scanAllianceWithGuilds` test for missing guild (nil return from GetByID)
+- Handler dispatch table test verifying all expected packet IDs are mapped
+- Scenario binary format documentation (`docs/scenario-format.md`)
+
+### Infrastructure
+
+- Updated `go.mod` dependencies
+- Added `IF NOT EXISTS` guard to alliance recruiting column migration
+
+## [9.3.0-rc1] - 2026-02-28
+
+900 commits, 860 files changed, ~100,000 lines of new code. The largest Erupe release ever.
+
+### Added
+
+#### Architecture
+- Repository pattern: 21 interfaces in `repo_interfaces.go` replace all inline SQL in handlers (`CharacterRepo`, `GuildRepo`, `UserRepo`, `SessionRepo`, `AchievementRepo`, `CafeRepo`, `DistributionRepo`, `DivaRepo`, `EventRepo`, `FestaRepo`, `GachaRepo`, `GoocooRepo`, `HouseRepo`, `MailRepo`, `MercenaryRepo`, `MiscRepo`, `RengokuRepo`, `ScenarioRepo`, `ShopRepo`, `StampRepo`, `TowerRepo`)
+- Service layer: 6 services encapsulating multi-step business logic (`GuildService`, `MailService`, `GachaService`, `AchievementService`, `TowerService`, `FestaService`)
+- `ChannelRegistry` interface for cross-channel operations (worldcast, session lookup, mail, disconnect) — channels decoupled for independent operation
+- Sign server converted to repository pattern with 3 interfaces (`SignUserRepo`, `SignCharacterRepo`, `SignSessionRepo`)
+
+#### Database & Schema
+- Embedded auto-migrating database schema system (`server/migrations/`): the server binary now contains all SQL and runs migrations automatically on startup — no more `pg_restore`, manual patch ordering, or external `schemas/` directory
+- Catch-up migration (`0002_catch_up_patches.sql`) for databases with partially-applied patch schemas — idempotent no-op on fresh or fully-patched databases, fills gaps for partial installations
+- Setup wizard: web-based first-run configuration at `http://localhost:8080` when `config.json` is missing — guides through database connection, schema initialization, and server settings
+- Seed data embedded and applied automatically on fresh installs (shops, events, gacha, scenarios, etc.)
+- Database connection pool configuration
+
+#### Game Systems
+- Quest enumeration completely rewritten with quest caching system
+- Event quest cycling with database-driven rotation and season/time override
+- Quest stamp card system with retro stamp rewards
+- Raviente v3 rework: ID system, semaphore handling, party broadcasting, customizable latency and max players
+- Warehouse v2 rewrite with proper serialization across game versions
+- Distribution system completely rewritten with proper typing and version support
+- Conquest/Earth status: multiple war targets, rewritten handlers, status override options
+- Festa bonus categories, trial voting, version-gated info (S6.0, Z2)
+- Monthly guild item claim tracking per character per type (standard/HLC/EXC)
+- Scenario counter implementation with database-driven defaults
+- Campaign structs ported with backwards compatibility
+- Trend weapons implementation
+- Clan Changing Room support
+- Operator accounts and ban system
+- NG word filter (ASCII and SJIS)
+- Custom command prefixes with help command
+
+#### Client Version Support
+- Season 6.0: savedata compatibility, encryption fix, semaphore fix, terminal log fix
+- Forward.4–F.5: ClientMode support added
+- G1–G2: save pointers enabled, gacha shop fix, compatibility fixes
+- G3–G9.1: save pointers verified, DecoMyset response fixes
+- < G10: InfoGuild response fix, semaphore backwards compatibility
+- PS3: PS3SGN support, PSN account linking, trophy course
+- PS Vita: VITASGN support, PSN linking
+- Wii U: WIIUSGN support
+- 40 client versions supported (S1.0 through ZZ) via `ClientMode` config option
+
+#### API
+- `/v2/` route prefix with HTTP method enforcement alongside legacy routes
+- `GET /v2/server/status` endpoint returning MezFes schedule, featured weapon, and festa/diva event status
+- `DELETE /v2/characters/{id}` route
+- `GET /version` endpoint returning server name and client mode
+- `GET /health` endpoint with Docker healthchecks
+- Auth middleware extracting `Authorization: Bearer <token>` header for v2 routes; legacy body-token auth preserved
+- Standardized JSON error responses (`{"error":"...","message":"..."}`) across all endpoints
+- `returning` field on characters (true if last login > 90 days ago) and `courses` field on auth data
+- `APIEventRepo` interface and read-only implementation for feature weapons and events
+- OpenAPI spec at `docs/openapi.yaml`
+
+#### Developer Tooling
+- Protocol bot (`cmd/protbot/`): headless MHF client implementing the complete sign → entrance → channel flow for automated testing and protocol debugging
+- Packet capture & replay system (`network/pcap/`): transparent recording, filtering, metadata, and standalone replay tool
+- Mock repository implementations for all 21 interfaces — handler unit tests without PostgreSQL
+- 120+ new test files, coverage pushed from ~7% to 65%+
+- CI: GitHub Actions with race detector, coverage threshold (≥50%), `golangci-lint` v2, automated release builds (Linux/Windows)
+- CI: Docker CD workflow pushing images to GHCR
+
+#### Logging & Observability
+- Standardized `zap` structured logging across all packages (replaced `fmt.Printf`, `log.*`)
+- Comprehensive production logging for save operations (warehouse, Koryo points, savedata, Hunter Navi, plate equipment)
+- Disconnect type tracking (graceful, connection_lost, error) with detailed logging
+- Session lifecycle logging with duration and metrics tracking
+- Plate data (transmog) safety net in logout flow
+
+### Changed
+
+- Minimum Go version: 1.21 → 1.25
+- Monolithic `handlers.go` split into ~30 domain-specific files; guild handlers split from 1 file to 10
+- Handler registration: replaced `init()` with explicit `buildHandlerTable()` construction
+- Eliminated `ErupeConfig` global variable — config passed explicitly throughout
+- Schema management consolidated: replaced 4 independent code paths (Docker shell script, setup wizard, test helpers, manual psql) with single embedded migration runner
+- Docker simplified: removed schema volume mounts and init script — the server binary handles everything
+- `config.json` removed from repo; `config.example.json` minimized, `config.reference.json` added with all options
+- Stage map replaced with `sync.Map`-backed `StageMap` implementation
+- Refactored logout flow to save all data before cleanup (prevents data loss race conditions)
+- Unified save operation into single `saveAllCharacterData()` function with proper error handling
+- SignV2 server removed — merged into unified API server
+- `ByteFrame` read-overflow panic replaced with sticky error pattern (`bf.Err()`)
+- `panic()` calls replaced with structured error handling throughout
+- 15+ `Unk*` packet fields renamed to meaningful names across the protocol
+- `errcheck` lint compliance across entire codebase
+
+### Fixed
+
+#### Gameplay
+- Fixed lobby search returning all reserved players instead of only quest-bound players — `QuestReserved` now counts only clients in "Qs" stages, matching retail ([#167](https://github.com/Mezeporta/Erupe/issues/167))
+- Fixed bookshelf save data pointer being off by 14810 bytes for G1–Z2, F4–F5, and S6 game versions ([#164](https://github.com/Mezeporta/Erupe/issues/164))
+- Fixed guild alliance application toggle being hardcoded to always-open ([#166](https://github.com/Mezeporta/Erupe/issues/166))
+- Fixed gacha shop not working on G1–GG clients due to protocol differences — thanks @Sin365 (#150)
+- Fixed save data corruption check rejecting valid saves due to name encoding mismatches (SJIS/UTF-8)
+- Fixed incomplete saves during logout — character savedata now persisted even during ungraceful disconnects
+- Fixed stale transmog/armor appearance shown to other players — user binary cache invalidated on save
+- Fixed login boost creating hanging connections
+- Fixed MezFes tickets not resetting weekly
+- Fixed event quests not selectable
+- Fixed inflated festa rewards
+- Fixed RP inconsistent between clients
+- Fixed limited friends & clanmates display
+- Fixed house theme corruption on save (#92)
+- Fixed Sky Corridor race condition preventing skill data wipe (#85)
+- Fixed `CafeDuration` and `AcquireCafeItem` cost for G1–G5.2 clients
+- Fixed quest mark labelling
+- Fixed HunterNavi savedata clipping (last 2 bytes)
+
+#### Stability
+- Fixed deadlock in zone change causing 60-second timeout
+- Fixed 3 critical race conditions in `handlers_stage.go`
+- Fixed data race in `token.RNG` global used concurrently across goroutines
+- Fixed JPK decompression data race
+- Fixed session lifecycle races in shutdown path
+- Fixed concurrent quest cache map write
+- Fixed guild RP rollover race
+- Fixed crash on clans with 0 members
+- Fixed crash when sending empty packets in `QueueSend`/`QueueSendNonBlocking`
+- Fixed `LoadDecoMyset` crash with 40+ decoration presets on older versions
+- Fixed `WaitStageBinary` handler hanging indefinitely
+- Fixed double-save bug in logout flow
+- Fixed save operation ordering — data saved before session cleanup instead of after
+
+#### Protocol
+- Fixed missing ACK responses across handlers — prevents client softlocks
+- Fixed missing stage transfer packet for empty zones
+- Fixed client crash when quest or scenario files are missing — sends failure ACK instead of nil data
+- Fixed server crash when Discord relay receives unsupported Shift-JIS characters (emoji, Lenny faces, cuneiform, etc.)
+
+### Removed
+
+- Compatibility with Go 1.21
+- Old `schemas/` and `bundled-schema/` directories (replaced by embedded migrations)
+- `distribution.data` column (unused, prevented seed data from matching Go code expectations) (#169)
+- SignV2 server (merged into unified API server)
+- Unused `timeserver` module
+
+### Security
+
+- Bumped `golang.org/x/net` from 0.18.0 to 0.38.0
+- Bumped `golang.org/x/crypto` from 0.15.0 to 0.35.0
+- Path traversal fix in screenshot API endpoint
+- CodeQL scanning added to CI
+- Binary blob size guards on save handlers
+- Database connection arguments escaped
 
 ## [9.2.0] - 2023-04-01
 
@@ -344,6 +606,6 @@ Initial Community Edition and foundational work:
 
 This changelog documents all known changes from the Community Edition reupload (February 25, 2022) onwards. The period before this (Einherjar Team era, ~2020-2022) has no public git history.
 
-Earlier development by Cappuccino/Ellie42 (March 2020) focused on basic server infrastructure, multiplayer systems, and core functionality. See [AUTHORS.md](AUTHORS.md) for detailed development history.
+Earlier development by Cappuccino/Ellie42 (March 2020) focused on basic server infrastructure, multiplayer systems, and core functionality. See [HISTORY.md](HISTORY.md) for detailed development history.
 
 The project began following semantic versioning with v9.0.0 (August 3, 2022) and maintains tagged releases for stable versions. Development continues on the main branch with features merged from feature branches.

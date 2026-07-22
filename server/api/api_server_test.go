@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
-	_config "erupe-ce/config"
+	cfg "erupe-ce/config"
 	"go.uber.org/zap"
 )
 
 func TestNewAPIServer(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	cfg := NewTestConfig()
 	config := &Config{
@@ -45,25 +45,25 @@ func TestNewAPIServer(t *testing.T) {
 
 func TestNewAPIServerConfig(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
-	cfg := &_config.Config{
-		API: _config.API{
+	cfg := &cfg.Config{
+		API: cfg.API{
 			Port:        9999,
 			PatchServer: "http://example.com",
-			Banners:     []_config.APISignBanner{},
-			Messages:    []_config.APISignMessage{},
-			Links:       []_config.APISignLink{},
+			Banners:     []cfg.APISignBanner{},
+			Messages:    []cfg.APISignMessage{},
+			Links:       []cfg.APISignLink{},
 		},
-		Screenshots: _config.ScreenshotsOptions{
+		Screenshots: cfg.ScreenshotsOptions{
 			Enabled:       false,
 			OutputDir:     "/custom/path",
 			UploadQuality: 95,
 		},
-		DebugOptions: _config.DebugOptions{
+		DebugOptions: cfg.DebugOptions{
 			MaxLauncherHR: true,
 		},
-		GameplayOptions: _config.GameplayOptions{
+		GameplayOptions: cfg.GameplayOptions{
 			MezFesSoloTickets: 200,
 		},
 	}
@@ -94,7 +94,7 @@ func TestAPIServerStart(t *testing.T) {
 	// It attempts to start an actual HTTP server
 
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	cfg := NewTestConfig()
 	cfg.API.Port = 18888 // Use a high port less likely to be in use
@@ -124,7 +124,7 @@ func TestAPIServerStart(t *testing.T) {
 		// This might fail if the server didn't start properly or port is blocked
 		t.Logf("Failed to connect to server: %v", err)
 	} else {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
 			t.Logf("Unexpected status code: %d", resp.StatusCode)
 		}
@@ -148,7 +148,7 @@ func TestAPIServerStart(t *testing.T) {
 
 func TestAPIServerShutdown(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	cfg := NewTestConfig()
 	cfg.API.Port = 18889
@@ -174,7 +174,7 @@ func TestAPIServerShutdown(t *testing.T) {
 
 func TestAPIServerShutdownSetsFlag(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	cfg := NewTestConfig()
 	config := &Config{
@@ -202,7 +202,7 @@ func TestAPIServerShutdownSetsFlag(t *testing.T) {
 
 func TestAPIServerConcurrentShutdown(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	cfg := NewTestConfig()
 	config := &Config{
@@ -241,7 +241,7 @@ func TestAPIServerConcurrentShutdown(t *testing.T) {
 
 func TestAPIServerMutex(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	cfg := NewTestConfig()
 	config := &Config{
@@ -264,7 +264,7 @@ func TestAPIServerMutex(t *testing.T) {
 
 func TestAPIServerHTTPServerInitialization(t *testing.T) {
 	logger := NewTestLogger(t)
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	cfg := NewTestConfig()
 	config := &Config{
@@ -286,7 +286,7 @@ func TestAPIServerHTTPServerInitialization(t *testing.T) {
 
 func BenchmarkNewAPIServer(b *testing.B) {
 	logger, _ := zap.NewDevelopment()
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	cfg := NewTestConfig()
 	config := &Config{

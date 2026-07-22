@@ -297,9 +297,9 @@ func TestGetAchData_Level7SilverTrophy(t *testing.T) {
 // produces the correct gold trophy and the last threshold as Required/Progress.
 func TestGetAchData_MaxedOut_AllCurves(t *testing.T) {
 	tests := []struct {
-		name     string
-		id       uint8
-		score    int32
+		name       string
+		id         uint8
+		score      int32
 		lastThresh int32
 	}{
 		// Curve 0: {5,15,30,50,100,150,200,300} sum=850, last=300
@@ -383,11 +383,11 @@ func TestGetAchData_Curve2_FestaWins(t *testing.T) {
 		wantReq  uint32
 	}{
 		{0, 0, 0, 1},
-		{1, 1, 0, 2},       // Exactly at first threshold
-		{2, 1, 1, 2},       // One into second threshold
-		{3, 2, 0, 3},       // Exactly at second cumulative
-		{36, 8, 8, 8},      // Max level (sum of all thresholds)
-		{100, 8, 8, 8},     // Well above max
+		{1, 1, 0, 2},   // Exactly at first threshold
+		{2, 1, 1, 2},   // One into second threshold
+		{3, 2, 0, 3},   // Exactly at second cumulative
+		{36, 8, 8, 8},  // Max level (sum of all thresholds)
+		{100, 8, 8, 8}, // Well above max
 	}
 
 	for _, tt := range tests {
@@ -451,4 +451,210 @@ func TestGetAchData_UpdatedAlwaysFalse(t *testing.T) {
 			t.Errorf("score=%d: Updated should always be false, got true", score)
 		}
 	}
+}
+
+// --- Mock-based handler tests ---
+
+func TestHandleMsgMhfGetAchievement_Success(t *testing.T) {
+	server := createMockServer()
+	mock := &mockAchievementRepo{
+		scores: [33]int32{5, 0, 20, 0, 0, 0, 0, 1}, // A few non-zero scores
+	}
+	server.achievementRepo = mock
+	ensureAchievementService(server)
+	session := createMockSession(1, server)
+
+	pkt := &mhfpacket.MsgMhfGetAchievement{
+		AckHandle: 100,
+		CharID:    1,
+	}
+
+	handleMsgMhfGetAchievement(session, pkt)
+
+	if !mock.ensureCalled {
+		t.Error("EnsureExists should have been called")
+	}
+
+	select {
+	case p := <-session.sendPackets:
+		// Response should contain: 16 bytes header + 3 bytes unk + 1 byte count + 33 entries
+		// Each entry: 1+1+2+4+1+1+2+4 = 16 bytes, so 33*16 = 528 + 20 header = 548
+		if len(p.data) < 100 {
+			t.Errorf("Response too short: %d bytes", len(p.data))
+		}
+	default:
+		t.Error("No response packet queued")
+	}
+}
+
+func TestHandleMsgMhfGetAchievement_DBError(t *testing.T) {
+	server := createMockServer()
+	mock := &mockAchievementRepo{
+		getScoresErr: errNotFound,
+	}
+	server.achievementRepo = mock
+	ensureAchievementService(server)
+	session := createMockSession(1, server)
+
+	pkt := &mhfpacket.MsgMhfGetAchievement{
+		AckHandle: 100,
+		CharID:    1,
+	}
+
+	handleMsgMhfGetAchievement(session, pkt)
+
+	select {
+	case p := <-session.sendPackets:
+		// On error, should return 20 zero bytes
+		if len(p.data) == 0 {
+			t.Error("Response should have fallback data")
+		}
+	default:
+		t.Error("No response packet queued")
+	}
+}
+
+func TestHandleMsgMhfGetAchievement_AllZeroScores(t *testing.T) {
+	server := createMockServer()
+	mock := &mockAchievementRepo{} // All scores default to 0
+	server.achievementRepo = mock
+	ensureAchievementService(server)
+	session := createMockSession(1, server)
+
+	pkt := &mhfpacket.MsgMhfGetAchievement{
+		AckHandle: 200,
+		CharID:    1,
+	}
+
+	handleMsgMhfGetAchievement(session, pkt)
+
+	select {
+	case p := <-session.sendPackets:
+		if len(p.data) < 100 {
+			t.Errorf("Response too short: %d bytes", len(p.data))
+		}
+	default:
+		t.Error("No response packet queued")
+	}
+}
+
+func TestHandleMsgMhfAddAchievement_Valid(t *testing.T) {
+	server := createMockServer()
+	mock := &mockAchievementRepo{}
+	server.achievementRepo = mock
+	ensureAchievementService(server)
+	session := createMockSession(42, server)
+
+	pkt := &mhfpacket.MsgMhfAddAchievement{
+		AchievementID: 5,
+	}
+
+	handleMsgMhfAddAchievement(session, pkt)
+
+	if !mock.ensureCalled {
+		t.Error("EnsureExists should have been called")
+	}
+	if mock.incrementedID != 5 {
+		t.Errorf("IncrementScore called with ID %d, want 5", mock.incrementedID)
+	}
+}
+
+func TestHandleMsgMhfAddAchievement_OutOfRange(t *testing.T) {
+	server := createMockServer()
+	mock := &mockAchievementRepo{}
+	server.achievementRepo = mock
+	ensureAchievementService(server)
+	session := createMockSession(42, server)
+
+	pkt := &mhfpacket.MsgMhfAddAchievement{
+		AchievementID: 33, // > 32, should be rejected
+	}
+
+	handleMsgMhfAddAchievement(session, pkt)
+
+	if mock.ensureCalled {
+		t.Error("EnsureExists should NOT be called for out-of-range ID")
+	}
+}
+
+func TestHandleMsgMhfAddAchievement_BoundaryID32(t *testing.T) {
+	server := createMockServer()
+	mock := &mockAchievementRepo{}
+	server.achievementRepo = mock
+	ensureAchievementService(server)
+	session := createMockSession(42, server)
+
+	pkt := &mhfpacket.MsgMhfAddAchievement{
+		AchievementID: 32, // Exactly at boundary, should be accepted
+	}
+
+	handleMsgMhfAddAchievement(session, pkt)
+
+	if !mock.ensureCalled {
+		t.Error("EnsureExists should be called for ID 32")
+	}
+	if mock.incrementedID != 32 {
+		t.Errorf("IncrementScore called with ID %d, want 32", mock.incrementedID)
+	}
+}
+
+func TestHandleMsgMhfSetCaAchievementHist_Response(t *testing.T) {
+	server := createMockServer()
+	session := createMockSession(1, server)
+
+	pkt := &mhfpacket.MsgMhfSetCaAchievementHist{
+		AckHandle: 44444,
+	}
+
+	handleMsgMhfSetCaAchievementHist(session, pkt)
+
+	select {
+	case p := <-session.sendPackets:
+		if len(p.data) == 0 {
+			t.Error("Response packet should have data")
+		}
+	default:
+		t.Error("No response packet queued")
+	}
+}
+
+// Tests consolidated from handlers_coverage3_test.go
+
+func TestEmptyHandlers_AchievementGo(t *testing.T) {
+	server := createMockServer()
+	session := createMockSession(1, server)
+
+	tests := []struct {
+		name string
+		fn   func()
+	}{
+		{"handleMsgMhfDisplayedAchievement", func() {
+			handleMsgMhfDisplayedAchievement(session, &mhfpacket.MsgMhfDisplayedAchievement{})
+		}},
+		{"handleMsgMhfGetCaAchievementHist", func() { handleMsgMhfGetCaAchievementHist(session, nil) }},
+		{"handleMsgMhfSetCaAchievement", func() { handleMsgMhfSetCaAchievement(session, nil) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("%s panicked: %v", tt.name, r)
+				}
+			}()
+			tt.fn()
+		})
+	}
+}
+
+func TestEmptyHandlers_MiscFiles_Achievement(t *testing.T) {
+	server := createMockServer()
+	session := createMockSession(1, server)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("handleMsgMhfPaymentAchievement panicked: %v", r)
+		}
+	}()
+	handleMsgMhfPaymentAchievement(session, nil)
 }

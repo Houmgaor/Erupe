@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
-	
-	_config "erupe-ce/config"
+
+	cfg "erupe-ce/config"
 	"erupe-ce/network"
 	"sync"
 	"testing"
@@ -55,17 +55,19 @@ func createTestSession(mock network.Conn) *Session {
 	// Create a production logger for testing (will output to stderr)
 	logger, _ := zap.NewProduction()
 
+	server := &Server{
+		erupeConfig: &cfg.Config{
+			DebugOptions: cfg.DebugOptions{
+				LogOutboundMessages: false,
+			},
+		},
+	}
+	server.Registry = NewLocalChannelRegistry([]*Server{server})
 	s := &Session{
 		logger:      logger,
 		sendPackets: make(chan packet, 20),
 		cryptConn:   mock,
-		server: &Server{
-			erupeConfig: &_config.Config{
-				DebugOptions: _config.DebugOptions{
-					LogOutboundMessages: false,
-				},
-			},
-		},
+		server:      server,
 	}
 	return s
 }
@@ -74,27 +76,27 @@ func createTestSession(mock network.Conn) *Session {
 // with their own terminators instead of being concatenated
 func TestPacketQueueIndividualSending(t *testing.T) {
 	tests := []struct {
-		name           string
-		packetCount    int
-		wantPackets    int
+		name            string
+		packetCount     int
+		wantPackets     int
 		wantTerminators int
 	}{
 		{
-			name:           "single_packet",
-			packetCount:    1,
-			wantPackets:    1,
+			name:            "single_packet",
+			packetCount:     1,
+			wantPackets:     1,
 			wantTerminators: 1,
 		},
 		{
-			name:           "multiple_packets",
-			packetCount:    5,
-			wantPackets:    5,
+			name:            "multiple_packets",
+			packetCount:     5,
+			wantPackets:     5,
 			wantTerminators: 5,
 		},
 		{
-			name:           "many_packets",
-			packetCount:    20,
-			wantPackets:    20,
+			name:            "many_packets",
+			packetCount:     20,
+			wantPackets:     20,
 			wantTerminators: 20,
 		},
 	}
@@ -114,11 +116,23 @@ func TestPacketQueueIndividualSending(t *testing.T) {
 			}
 
 			// Wait for packets to be processed
-			time.Sleep(100 * time.Millisecond)
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				if mock.PacketCount() >= tt.wantPackets {
+					break
+				}
+				time.Sleep(1 * time.Millisecond)
+			}
 
 			// Stop the session
 			s.closed.Store(true)
-			time.Sleep(50 * time.Millisecond)
+			deadline = time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				if mock.PacketCount() >= tt.wantPackets {
+					break
+				}
+				time.Sleep(1 * time.Millisecond)
+			}
 
 			// Verify packet count
 			sentPackets := mock.GetSentPackets()
@@ -163,9 +177,21 @@ func TestPacketQueueNoConcatenation(t *testing.T) {
 	s.sendPackets <- packet{packet2, true}
 	s.sendPackets <- packet{packet3, true}
 
-	time.Sleep(100 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mock.PacketCount() >= 3 {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 	s.closed.Store(true)
-	time.Sleep(50 * time.Millisecond)
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mock.PacketCount() >= 3 {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 
 	sentPackets := mock.GetSentPackets()
 
@@ -202,7 +228,7 @@ func TestQueueSendUsesQueue(t *testing.T) {
 	s.QueueSend(testData)
 
 	// Give it a moment
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(1 * time.Millisecond)
 
 	// WITHOUT sendLoop running, packets should NOT be sent yet
 	if mock.PacketCount() > 0 {
@@ -216,7 +242,13 @@ func TestQueueSendUsesQueue(t *testing.T) {
 
 	// Now start sendLoop and verify it gets sent
 	go s.sendLoop()
-	time.Sleep(100 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mock.PacketCount() >= 1 {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 
 	if mock.PacketCount() != 1 {
 		t.Errorf("expected 1 packet sent after sendLoop, got %d", mock.PacketCount())
@@ -235,9 +267,21 @@ func TestPacketTerminatorFormat(t *testing.T) {
 	testData := []byte{0x00, 0x01, 0xAA, 0xBB}
 	s.sendPackets <- packet{testData, true}
 
-	time.Sleep(100 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mock.PacketCount() >= 1 {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 	s.closed.Store(true)
-	time.Sleep(50 * time.Millisecond)
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mock.PacketCount() >= 1 {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 
 	sentPackets := mock.GetSentPackets()
 	if len(sentPackets) != 1 {
@@ -311,9 +355,21 @@ func TestPacketQueueAckFormat(t *testing.T) {
 	ackData := []byte{0xAA, 0xBB, 0xCC, 0xDD}
 	s.QueueAck(ackHandle, ackData)
 
-	time.Sleep(100 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mock.PacketCount() >= 1 {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 	s.closed.Store(true)
-	time.Sleep(50 * time.Millisecond)
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mock.PacketCount() >= 1 {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 
 	sentPackets := mock.GetSentPackets()
 	if len(sentPackets) != 1 {

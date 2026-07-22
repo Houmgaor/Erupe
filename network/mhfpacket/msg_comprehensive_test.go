@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"erupe-ce/common/byteframe"
+	cfg "erupe-ce/config"
 	"erupe-ce/network"
 	"erupe-ce/network/clientctx"
 )
@@ -494,9 +495,13 @@ func TestAckHandlePacketsParse(t *testing.T) {
 		{"MsgMhfGetUdSchedule", network.MSG_MHF_GET_UD_SCHEDULE},
 		{"MsgMhfGetUdInfo", network.MSG_MHF_GET_UD_INFO},
 		{"MsgMhfGetKijuInfo", network.MSG_MHF_GET_KIJU_INFO},
+		{"MsgMhfGetExtraInfo", network.MSG_MHF_GET_EXTRA_INFO},
+		{"MsgMhfGetCogInfo", network.MSG_MHF_GET_COG_INFO},
+		{"MsgCaExchangeItem", network.MSG_CA_EXCHANGE_ITEM},
+		{"MsgMhfUseUdShopCoin", network.MSG_MHF_USE_UD_SHOP_COIN},
 	}
 
-	ctx := &clientctx.ClientContext{}
+	ctx := &clientctx.ClientContext{RealClientMode: cfg.ZZ}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -513,7 +518,7 @@ func TestAckHandlePacketsParse(t *testing.T) {
 			for i := 0; i < 32; i++ {
 				bf.WriteUint32(uint32(i))
 			}
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			// Parse should not panic
 			err := pkt.Parse(bf, ctx)
@@ -543,10 +548,10 @@ func TestAddAchievementParse(t *testing.T) {
 			bf.WriteUint8(tt.achievementID)
 			bf.WriteUint16(tt.unk1)
 			bf.WriteUint16(tt.unk2)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgMhfAddAchievement{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -583,10 +588,10 @@ func TestGetAchievementParse(t *testing.T) {
 			bf.WriteUint32(tt.ackHandle)
 			bf.WriteUint32(tt.charID)
 			bf.WriteUint32(tt.unk1)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgMhfGetAchievement{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -629,7 +634,7 @@ func TestBuildNotImplemented(t *testing.T) {
 	for _, pkt := range packetsToTest {
 		t.Run(pkt.Opcode().String(), func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
-			err := pkt.Build(bf, &clientctx.ClientContext{})
+			err := pkt.Build(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err == nil {
 				t.Logf("Build() did not return error (implementation may exist)")
 			} else {

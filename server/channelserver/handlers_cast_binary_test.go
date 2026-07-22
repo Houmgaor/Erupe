@@ -8,7 +8,7 @@ import (
 
 	"erupe-ce/common/byteframe"
 	"erupe-ce/common/mhfcourse"
-	_config "erupe-ce/config"
+	cfg "erupe-ce/config"
 	"erupe-ce/network/binpacket"
 	"erupe-ce/network/mhfpacket"
 )
@@ -122,7 +122,7 @@ func TestHandleMsgSysCastBinary_DiceCommand(t *testing.T) {
 		Message:    "@dice",
 		SenderName: "TestPlayer",
 	}
-	msg.Build(bf)
+	_ = msg.Build(bf)
 
 	pkt := &mhfpacket.MsgSysCastBinary{
 		Unk:            0,
@@ -154,10 +154,10 @@ func TestBroadcastTypes(t *testing.T) {
 				bf := byteframe.NewByteFrame()
 				bf.SetBE() // Targeted uses BE
 				msg := &binpacket.MsgBinTargeted{
-					TargetCharIDs: []uint32{1, 2, 3},
+					TargetCharIDs:  []uint32{1, 2, 3},
 					RawDataPayload: []byte{0xDE, 0xAD, 0xBE, 0xEF},
 				}
-				msg.Build(bf)
+				_ = msg.Build(bf)
 				return bf.Data()
 			},
 		},
@@ -218,8 +218,8 @@ func TestBroadcastTypes(t *testing.T) {
 // TestBinaryMessageTypes verifies different message types are handled
 func TestBinaryMessageTypes(t *testing.T) {
 	tests := []struct {
-		name        string
-		messageType uint8
+		name         string
+		messageType  uint8
 		buildPayload func() []byte
 	}{
 		{
@@ -245,7 +245,7 @@ func TestBinaryMessageTypes(t *testing.T) {
 					Message:    "test",
 					SenderName: "Player",
 				}
-				msg.Build(bf)
+				_ = msg.Build(bf)
 				return bf.Data()
 			},
 		},
@@ -317,40 +317,40 @@ func TestBinaryMessageTypes(t *testing.T) {
 func TestSlicesContainsUsage(t *testing.T) {
 	tests := []struct {
 		name     string
-		items    []_config.Course
-		target   _config.Course
+		items    []cfg.Course
+		target   cfg.Course
 		expected bool
 	}{
 		{
 			name: "item_exists",
-			items: []_config.Course{
+			items: []cfg.Course{
 				{Name: "Course1", Enabled: true},
 				{Name: "Course2", Enabled: false},
 			},
-			target:   _config.Course{Name: "Course1", Enabled: true},
+			target:   cfg.Course{Name: "Course1", Enabled: true},
 			expected: true,
 		},
 		{
 			name: "item_not_found",
-			items: []_config.Course{
+			items: []cfg.Course{
 				{Name: "Course1", Enabled: true},
 				{Name: "Course2", Enabled: false},
 			},
-			target:   _config.Course{Name: "Course3", Enabled: true},
+			target:   cfg.Course{Name: "Course3", Enabled: true},
 			expected: false,
 		},
 		{
 			name:     "empty_slice",
-			items:    []_config.Course{},
-			target:   _config.Course{Name: "Course1", Enabled: true},
+			items:    []cfg.Course{},
+			target:   cfg.Course{Name: "Course1", Enabled: true},
 			expected: false,
 		},
 		{
 			name: "enabled_mismatch",
-			items: []_config.Course{
+			items: []cfg.Course{
 				{Name: "Course1", Enabled: true},
 			},
-			target:   _config.Course{Name: "Course1", Enabled: false},
+			target:   cfg.Course{Name: "Course1", Enabled: false},
 			expected: false,
 		},
 	}
@@ -429,12 +429,12 @@ func TestChatMessageParsing(t *testing.T) {
 				Message:    tt.messageContent,
 				SenderName: tt.authorName,
 			}
-			msg.Build(bf)
+			_ = msg.Build(bf)
 
 			// Parse it back
 			parseBf := byteframe.NewByteFrameFromBytes(bf.Data())
 			parseBf.SetLE()
-			parseBf.Seek(8, 0) // Skip initial bytes
+			_, _ = parseBf.Seek(8, 0) // Skip initial bytes
 
 			message := string(parseBf.ReadNullTerminatedBytes())
 			author := string(parseBf.ReadNullTerminatedBytes())
@@ -681,7 +681,7 @@ func BenchmarkHandleMsgSysCastBinary(b *testing.B) {
 
 // BenchmarkSlicesContains benchmarks the slices.Contains function
 func BenchmarkSlicesContains(b *testing.B) {
-	courses := []_config.Course{
+	courses := []cfg.Course{
 		{Name: "Course1", Enabled: true},
 		{Name: "Course2", Enabled: false},
 		{Name: "Course3", Enabled: true},
@@ -689,7 +689,7 @@ func BenchmarkSlicesContains(b *testing.B) {
 		{Name: "Course5", Enabled: true},
 	}
 
-	target := _config.Course{Name: "Course3", Enabled: true}
+	target := cfg.Course{Name: "Course3", Enabled: true}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -710,4 +710,16 @@ func BenchmarkSlicesIndexFunc(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = slices.IndexFunc(courses, predicate)
 	}
+}
+
+func TestEmptyCastedBinaryHandler(t *testing.T) {
+	server := createMockServer()
+	session := createMockSession(1, server)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("handleMsgSysCastedBinary panicked: %v", r)
+		}
+	}()
+	handleMsgSysCastedBinary(session, nil)
 }

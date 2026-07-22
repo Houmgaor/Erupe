@@ -1,86 +1,30 @@
 package channelserver
 
 import (
+	"errors"
+
 	"erupe-ce/common/byteframe"
 	"erupe-ce/common/stringsupport"
 	"erupe-ce/network/mhfpacket"
-	"fmt"
 	"go.uber.org/zap"
-	"io"
 )
 
 func handleMsgMhfPostGuildScout(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfPostGuildScout)
 
-	actorCharGuildData, err := GetCharacterGuildData(s, s.charID)
+	err := s.server.guildService.PostScout(s.charID, pkt.CharID, ScoutInviteStrings{
+		Title: s.I18n().guild.invite.title,
+		Body:  s.I18n().guild.invite.body,
+	})
 
-	if err != nil {
-		doAckBufFail(s, pkt.AckHandle, make([]byte, 4))
-		panic(err)
-	}
-
-	if actorCharGuildData == nil || !actorCharGuildData.CanRecruit() {
-		doAckBufFail(s, pkt.AckHandle, make([]byte, 4))
-		return
-	}
-
-	guildInfo, err := GetGuildInfoByID(s, actorCharGuildData.GuildID)
-
-	if err != nil {
-		doAckBufFail(s, pkt.AckHandle, make([]byte, 4))
-		panic(err)
-	}
-
-	hasApplication, err := guildInfo.HasApplicationForCharID(s, pkt.CharID)
-
-	if err != nil {
-		doAckBufFail(s, pkt.AckHandle, make([]byte, 4))
-		panic(err)
-	}
-
-	if hasApplication {
+	if errors.Is(err, ErrAlreadyInvited) {
 		doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x04})
 		return
 	}
-
-	transaction, err := s.server.db.Begin()
-
 	if err != nil {
-		panic(err)
-	}
-
-	err = guildInfo.CreateApplication(s, pkt.CharID, GuildApplicationTypeInvited, transaction)
-
-	if err != nil {
-		rollbackTransaction(s, transaction)
-		doAckBufFail(s, pkt.AckHandle, nil)
-		panic(err)
-	}
-
-	mail := &Mail{
-		SenderID:    s.charID,
-		RecipientID: pkt.CharID,
-		Subject:     s.server.i18n.guild.invite.title,
-		Body: fmt.Sprintf(
-			s.server.i18n.guild.invite.body,
-			guildInfo.Name,
-		),
-		IsGuildInvite: true,
-	}
-
-	err = mail.Send(s, transaction)
-
-	if err != nil {
-		rollbackTransaction(s, transaction)
-		doAckBufFail(s, pkt.AckHandle, nil)
+		s.logger.Error("Failed to post guild scout", zap.Error(err))
+		doAckBufFail(s, pkt.AckHandle, make([]byte, 4))
 		return
-	}
-
-	err = transaction.Commit()
-
-	if err != nil {
-		doAckBufFail(s, pkt.AckHandle, nil)
-		panic(err)
 	}
 
 	doAckBufSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
@@ -89,10 +33,12 @@ func handleMsgMhfPostGuildScout(s *Session, p mhfpacket.MHFPacket) {
 func handleMsgMhfCancelGuildScout(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfCancelGuildScout)
 
-	guildCharData, err := GetCharacterGuildData(s, s.charID)
+	guildCharData, err := s.server.guildRepo.GetCharacterMembership(s.charID)
 
 	if err != nil {
-		panic(err)
+		s.logger.Error("Failed to get character guild data for cancel scout", zap.Error(err))
+		doAckBufFail(s, pkt.AckHandle, make([]byte, 4))
+		return
 	}
 
 	if guildCharData == nil || !guildCharData.CanRecruit() {
@@ -100,14 +46,14 @@ func handleMsgMhfCancelGuildScout(s *Session, p mhfpacket.MHFPacket) {
 		return
 	}
 
-	guild, err := GetGuildInfoByID(s, guildCharData.GuildID)
+	guild, err := s.server.guildRepo.GetByID(guildCharData.GuildID)
 
-	if err != nil {
+	if err != nil || guild == nil {
 		doAckBufFail(s, pkt.AckHandle, make([]byte, 4))
 		return
 	}
 
-	err = guild.CancelInvitation(s, pkt.InvitationID)
+	err = s.server.guildRepo.CancelInvite(pkt.InvitationID)
 
 	if err != nil {
 		doAckBufFail(s, pkt.AckHandle, make([]byte, 4))
@@ -119,146 +65,84 @@ func handleMsgMhfCancelGuildScout(s *Session, p mhfpacket.MHFPacket) {
 
 func handleMsgMhfAnswerGuildScout(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfAnswerGuildScout)
-	bf := byteframe.NewByteFrame()
-	guild, err := GetGuildInfoByCharacterId(s, pkt.LeaderID)
 
-	if err != nil {
-		panic(err)
-	}
+	i := s.I18n().guild.invite
+	result, err := s.server.guildService.AnswerScout(s.charID, pkt.LeaderID, pkt.Answer, AnswerScoutStrings{
+		SuccessTitle:  i.success.title,
+		SuccessBody:   i.success.body,
+		AcceptedTitle: i.accepted.title,
+		AcceptedBody:  i.accepted.body,
+		RejectedTitle: i.rejected.title,
+		RejectedBody:  i.rejected.body,
+		DeclinedTitle: i.declined.title,
+		DeclinedBody:  i.declined.body,
+	})
 
-	app, err := guild.GetApplicationForCharID(s, s.charID, GuildApplicationTypeInvited)
-
-	if app == nil || err != nil {
-		s.logger.Warn(
-			"Guild invite missing, deleted?",
-			zap.Error(err),
-			zap.Uint32("guildID", guild.ID),
-			zap.Uint32("charID", s.charID),
-		)
-		bf.WriteUint32(7)
-		bf.WriteUint32(guild.ID)
-		doAckBufSucceed(s, pkt.AckHandle, bf.Data())
+	if err != nil && !errors.Is(err, ErrApplicationMissing) {
+		s.logger.Error("Failed to answer guild scout", zap.Error(err))
+		doAckBufFail(s, pkt.AckHandle, nil)
 		return
 	}
 
-	var mail []Mail
-	if pkt.Answer {
-		err = guild.AcceptApplication(s, s.charID)
-		mail = append(mail, Mail{
-			RecipientID:     s.charID,
-			Subject:         s.server.i18n.guild.invite.success.title,
-			Body:            fmt.Sprintf(s.server.i18n.guild.invite.success.body, guild.Name),
-			IsSystemMessage: true,
-		})
-		mail = append(mail, Mail{
-			SenderID:        s.charID,
-			RecipientID:     pkt.LeaderID,
-			Subject:         s.server.i18n.guild.invite.accepted.title,
-			Body:            fmt.Sprintf(s.server.i18n.guild.invite.accepted.body, guild.Name),
-			IsSystemMessage: true,
-		})
-	} else {
-		err = guild.RejectApplication(s, s.charID)
-		mail = append(mail, Mail{
-			RecipientID:     s.charID,
-			Subject:         s.server.i18n.guild.invite.rejected.title,
-			Body:            fmt.Sprintf(s.server.i18n.guild.invite.rejected.body, guild.Name),
-			IsSystemMessage: true,
-		})
-		mail = append(mail, Mail{
-			SenderID:        s.charID,
-			RecipientID:     pkt.LeaderID,
-			Subject:         s.server.i18n.guild.invite.declined.title,
-			Body:            fmt.Sprintf(s.server.i18n.guild.invite.declined.body, guild.Name),
-			IsSystemMessage: true,
-		})
-	}
-	if err != nil {
-		bf.WriteUint32(7)
-		bf.WriteUint32(guild.ID)
-		doAckBufSucceed(s, pkt.AckHandle, bf.Data())
-	} else {
+	bf := byteframe.NewByteFrame()
+	if result != nil && result.Success {
 		bf.WriteUint32(0)
-		bf.WriteUint32(guild.ID)
-		doAckBufSucceed(s, pkt.AckHandle, bf.Data())
-		for _, m := range mail {
-			m.Send(s, nil)
+		bf.WriteUint32(result.GuildID)
+	} else {
+		if errors.Is(err, ErrApplicationMissing) {
+			s.logger.Warn("Guild invite missing, deleted?",
+				zap.Uint32("charID", s.charID))
+		}
+		bf.WriteUint32(7)
+		if result != nil {
+			bf.WriteUint32(result.GuildID)
+		} else {
+			bf.WriteUint32(0)
 		}
 	}
+	doAckBufSucceed(s, pkt.AckHandle, bf.Data())
 }
 
 func handleMsgMhfGetGuildScoutList(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetGuildScoutList)
 
-	guildInfo, _ := GetGuildInfoByCharacterId(s, s.charID)
+	guildInfo, err := s.server.guildRepo.GetByCharID(s.charID)
+	if err != nil {
+		s.logger.Warn("Failed to get guild for scout list", zap.Error(err))
+	}
 
-	if guildInfo == nil && s.prevGuildID == 0 {
-		doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
-		return
-	} else {
-		guildInfo, err := GetGuildInfoByID(s, s.prevGuildID)
+	if guildInfo == nil {
+		if s.prevGuildID == 0 {
+			doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
+			return
+		}
+		guildInfo, err = s.server.guildRepo.GetByID(s.prevGuildID)
 		if guildInfo == nil || err != nil {
 			doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
 			return
 		}
 	}
 
-	rows, err := s.server.db.Queryx(`
-		SELECT c.id, c.name, c.hr, c.gr, ga.actor_id
-			FROM guild_applications ga 
-			JOIN characters c ON c.id = ga.character_id
-		WHERE ga.guild_id = $1 AND ga.application_type = 'invited'
-	`, guildInfo.ID)
-
+	invites, err := s.server.guildRepo.ListInvites(guildInfo.ID)
 	if err != nil {
-		s.logger.Error("failed to retrieve scouted characters", zap.Error(err))
+		s.logger.Error("failed to retrieve scout invites", zap.Error(err))
 		doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
 		return
 	}
 
-	defer rows.Close()
-
 	bf := byteframe.NewByteFrame()
-
 	bf.SetBE()
+	bf.WriteUint32(uint32(len(invites)))
 
-	// Result count, we will overwrite this later
-	bf.WriteUint32(0x00)
-
-	count := uint32(0)
-
-	for rows.Next() {
-		var charName string
-		var charID, actorID uint32
-		var HR, GR uint16
-
-		err = rows.Scan(&charID, &charName, &HR, &GR, &actorID)
-
-		if err != nil {
-			doAckSimpleFail(s, pkt.AckHandle, nil)
-			continue
-		}
-
-		// This seems to be used as a unique ID for the invitation sent
-		// we can just use the charID and then filter on guild_id+charID when performing operations
-		// this might be a problem later with mails sent referencing IDs but we'll see.
-		bf.WriteUint32(charID)
-		bf.WriteUint32(actorID)
-		bf.WriteUint32(charID)
-		bf.WriteUint32(uint32(TimeAdjusted().Unix()))
-		bf.WriteUint16(HR) // HR?
-		bf.WriteUint16(GR) // GR?
-		bf.WriteBytes(stringsupport.PaddedString(charName, 32, true))
-		count++
+	for _, inv := range invites {
+		bf.WriteUint32(inv.ID)
+		bf.WriteUint32(inv.ActorID)
+		bf.WriteUint32(inv.CharID)
+		bf.WriteUint32(uint32(inv.InvitedAt.Unix()))
+		bf.WriteUint16(inv.HR)
+		bf.WriteUint16(inv.GR)
+		bf.WriteBytes(stringsupport.PaddedString(inv.Name, 32, true))
 	}
-
-	_, err = bf.Seek(0, io.SeekStart)
-
-	if err != nil {
-		panic(err)
-	}
-
-	bf.WriteUint32(count)
 
 	doAckBufSucceed(s, pkt.AckHandle, bf.Data())
 }
@@ -266,11 +150,7 @@ func handleMsgMhfGetGuildScoutList(s *Session, p mhfpacket.MHFPacket) {
 func handleMsgMhfGetRejectGuildScout(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfGetRejectGuildScout)
 
-	row := s.server.db.QueryRow("SELECT restrict_guild_scout FROM characters WHERE id=$1", s.charID)
-
-	var currentStatus bool
-
-	err := row.Scan(&currentStatus)
+	currentStatus, err := s.server.charRepo.ReadBool(s.charID, "restrict_guild_scout")
 
 	if err != nil {
 		s.logger.Error(
@@ -294,7 +174,7 @@ func handleMsgMhfGetRejectGuildScout(s *Session, p mhfpacket.MHFPacket) {
 func handleMsgMhfSetRejectGuildScout(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfSetRejectGuildScout)
 
-	_, err := s.server.db.Exec("UPDATE characters SET restrict_guild_scout=$1 WHERE id=$2", pkt.Reject, s.charID)
+	err := s.server.charRepo.SaveBool(s.charID, "restrict_guild_scout", pkt.Reject)
 
 	if err != nil {
 		s.logger.Error(

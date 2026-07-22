@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"erupe-ce/common/byteframe"
-	_config "erupe-ce/config"
+	cfg "erupe-ce/config"
 	"erupe-ce/network"
 
 	"go.uber.org/zap"
@@ -64,8 +64,8 @@ func (m *mockConn) RemoteAddr() net.Addr {
 }
 
 func (m *mockConn) SetDeadline(t time.Time) error      { return nil }
-func (m *mockConn) SetReadDeadline(t time.Time) error   { return nil }
-func (m *mockConn) SetWriteDeadline(t time.Time) error  { return nil }
+func (m *mockConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil }
 
 func TestSessionStruct(t *testing.T) {
 	logger := zap.NewNop()
@@ -75,7 +75,7 @@ func TestSessionStruct(t *testing.T) {
 		logger:    logger,
 		server:    nil,
 		rawConn:   conn,
-		cryptConn: network.NewCryptConn(conn),
+		cryptConn: network.NewCryptConn(conn, cfg.ZZ, nil),
 	}
 
 	if s.logger != logger {
@@ -110,6 +110,7 @@ func TestSessionMutex(t *testing.T) {
 	s := &Session{}
 
 	s.Lock()
+	//nolint:staticcheck // SA2001: testing that Lock/Unlock doesn't panic
 	s.Unlock()
 
 	done := make(chan bool)
@@ -123,6 +124,7 @@ func TestSessionMutex(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 
 	s.Lock()
+	//nolint:staticcheck // SA2001: testing that Lock/Unlock doesn't panic
 	s.Unlock()
 
 	<-done
@@ -130,8 +132,7 @@ func TestSessionMutex(t *testing.T) {
 
 func TestHandlePacketUnknownRequest(t *testing.T) {
 	logger := zap.NewNop()
-	erupeConfig := &_config.Config{
-	}
+	erupeConfig := &cfg.Config{}
 
 	server := &Server{
 		logger:      logger,
@@ -143,7 +144,7 @@ func TestHandlePacketUnknownRequest(t *testing.T) {
 		logger:    logger,
 		server:    server,
 		rawConn:   conn,
-		cryptConn: network.NewCryptConn(conn),
+		cryptConn: network.NewCryptConn(conn, cfg.ZZ, nil),
 	}
 
 	bf := byteframe.NewByteFrame()
@@ -158,8 +159,8 @@ func TestHandlePacketUnknownRequest(t *testing.T) {
 
 func TestHandlePacketWithDevModeLogging(t *testing.T) {
 	logger := zap.NewNop()
-	erupeConfig := &_config.Config{
-		DebugOptions: _config.DebugOptions{
+	erupeConfig := &cfg.Config{
+		DebugOptions: cfg.DebugOptions{
 			LogInboundMessages: true,
 		},
 	}
@@ -174,7 +175,7 @@ func TestHandlePacketWithDevModeLogging(t *testing.T) {
 		logger:    logger,
 		server:    server,
 		rawConn:   conn,
-		cryptConn: network.NewCryptConn(conn),
+		cryptConn: network.NewCryptConn(conn, cfg.ZZ, nil),
 	}
 
 	bf := byteframe.NewByteFrame()
@@ -201,7 +202,7 @@ func TestHandlePacketRequestTypes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			logger := zap.NewNop()
-			erupeConfig := &_config.Config{}
+			erupeConfig := &cfg.Config{}
 			server := &Server{
 				logger:      logger,
 				erupeConfig: erupeConfig,
@@ -212,7 +213,7 @@ func TestHandlePacketRequestTypes(t *testing.T) {
 				logger:    logger,
 				server:    server,
 				rawConn:   conn,
-				cryptConn: network.NewCryptConn(conn),
+				cryptConn: network.NewCryptConn(conn, cfg.ZZ, nil),
 			}
 
 			bf := byteframe.NewByteFrame()
@@ -322,7 +323,7 @@ func TestMockConnDeadlines(t *testing.T) {
 
 func TestSessionWithCryptConn(t *testing.T) {
 	conn := newMockConn()
-	cryptConn := network.NewCryptConn(conn)
+	cryptConn := network.NewCryptConn(conn, cfg.ZZ, nil)
 
 	if cryptConn == nil {
 		t.Fatal("NewCryptConn() returned nil")
@@ -340,8 +341,8 @@ func TestSessionWithCryptConn(t *testing.T) {
 
 func TestSessionWorkWithDevModeLogging(t *testing.T) {
 	logger := zap.NewNop()
-	erupeConfig := &_config.Config{
-		DebugOptions: _config.DebugOptions{
+	erupeConfig := &cfg.Config{
+		DebugOptions: cfg.DebugOptions{
 			LogInboundMessages: true,
 		},
 	}
@@ -352,25 +353,24 @@ func TestSessionWorkWithDevModeLogging(t *testing.T) {
 	}
 
 	clientConn, serverConn := net.Pipe()
-	defer clientConn.Close()
-	defer serverConn.Close()
+	defer func() { _ = clientConn.Close() }()
+	defer func() { _ = serverConn.Close() }()
 
 	session := &Session{
 		logger:    logger,
 		server:    server,
 		rawConn:   serverConn,
-		cryptConn: network.NewCryptConn(serverConn),
+		cryptConn: network.NewCryptConn(serverConn, cfg.ZZ, nil),
 	}
 
-	clientConn.Close()
+	_ = clientConn.Close()
 
 	session.work()
 }
 
 func TestSessionWorkWithEmptyRead(t *testing.T) {
 	logger := zap.NewNop()
-	erupeConfig := &_config.Config{
-	}
+	erupeConfig := &cfg.Config{}
 
 	server := &Server{
 		logger:      logger,
@@ -378,16 +378,16 @@ func TestSessionWorkWithEmptyRead(t *testing.T) {
 	}
 
 	clientConn, serverConn := net.Pipe()
-	defer serverConn.Close()
+	defer func() { _ = serverConn.Close() }()
 
 	session := &Session{
 		logger:    logger,
 		server:    server,
 		rawConn:   serverConn,
-		cryptConn: network.NewCryptConn(serverConn),
+		cryptConn: network.NewCryptConn(serverConn, cfg.ZZ, nil),
 	}
 
-	clientConn.Close()
+	_ = clientConn.Close()
 
 	session.work()
 }

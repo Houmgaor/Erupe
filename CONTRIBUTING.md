@@ -21,7 +21,7 @@ Thank you for your interest in contributing to Erupe! This guide will help you g
    ```
 
 3. Set up the database following the [Installation guide](README.md#installation)
-4. Copy `config.example.json` to `config.json` and configure it
+4. Copy `config.example.json` to `config.json` and set your database password (see `config.reference.json` for all available options)
 5. Install dependencies:
 
    ```bash
@@ -153,25 +153,18 @@ func TestYourFunction(t *testing.T) {
 
 ## Database Schema Changes
 
-### Patch Schemas (Development)
+Erupe uses an embedded auto-migrating schema system in `server/migrations/`.
 
-When actively developing new features that require schema changes:
+When adding schema changes:
 
-1. Create a new file in `schemas/patch-schema/` with format: `NN_description.sql`
-2. Increment the number from the last patch
-3. Test the migration on a clean database
-4. Document what the patch does in comments
+1. Create a new file in `server/migrations/sql/` with format: `NNNN_description.sql` (e.g. `0002_add_new_table.sql`)
+2. Increment the number from the last migration
+3. Test the migration on both a fresh and existing database
+4. Document what the migration does in SQL comments
 
-**Important**: Patch schemas are temporary and may change during development.
+Migrations run automatically on startup in order. Each runs in its own transaction and is tracked in the `schema_version` table.
 
-### Update Schemas (Production)
-
-For release-ready schema changes:
-
-1. Consolidate patch schemas into update schemas
-2. Create a new file in appropriate schema directory
-3. Update schema version tracking
-4. Test migration paths from previous versions
+For seed/demo data (shops, events, gacha), add files to `server/migrations/seed/`. Seed data is applied automatically on fresh databases and can be re-applied via the setup wizard.
 
 ## Documentation Requirements
 

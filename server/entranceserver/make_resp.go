@@ -4,26 +4,26 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"erupe-ce/common/stringsupport"
-	_config "erupe-ce/config"
-	"fmt"
+	cfg "erupe-ce/config"
 	"net"
 
 	"erupe-ce/common/byteframe"
-	"erupe-ce/server/channelserver"
+	"erupe-ce/common/gametime"
+	"go.uber.org/zap"
 )
 
-func encodeServerInfo(config *_config.Config, s *Server, local bool) []byte {
+func encodeServerInfo(config *cfg.Config, s *Server, local bool) []byte {
 	serverInfos := config.Entrance.Entries
 	bf := byteframe.NewByteFrame()
 
 	for serverIdx, si := range serverInfos {
 		// Prevent MezFes Worlds displaying on Z1
-		if config.RealClientMode <= _config.Z1 {
+		if config.RealClientMode <= cfg.Z1 {
 			if si.Type == 6 {
 				continue
 			}
 		}
-		if config.RealClientMode <= _config.G6 {
+		if config.RealClientMode <= cfg.G6 {
 			if si.Type == 5 {
 				continue
 			}
@@ -41,37 +41,39 @@ func encodeServerInfo(config *_config.Config, s *Server, local bool) []byte {
 		bf.WriteUint16(0)
 		bf.WriteUint16(uint16(len(si.Channels)))
 		bf.WriteUint8(si.Type)
-		bf.WriteUint8(uint8(((channelserver.TimeAdjusted().Unix() / 86400) + int64(serverIdx)) % 3))
-		if s.erupeConfig.RealClientMode >= _config.G1 {
+		bf.WriteUint8(uint8(((gametime.Adjusted().Unix() / 86400) + int64(serverIdx)) % 3))
+		if s.erupeConfig.RealClientMode >= cfg.G1 {
 			bf.WriteUint8(si.Recommended)
 		}
 
 		fullName := append(append(stringsupport.UTF8ToSJIS(si.Name), []byte{0x00}...), stringsupport.UTF8ToSJIS(si.Description)...)
-		if s.erupeConfig.RealClientMode >= _config.G1 && s.erupeConfig.RealClientMode <= _config.G5 {
+		if s.erupeConfig.RealClientMode >= cfg.G1 && s.erupeConfig.RealClientMode <= cfg.G5 {
 			bf.WriteUint8(uint8(len(fullName)))
 			bf.WriteBytes(fullName)
 		} else {
-			if s.erupeConfig.RealClientMode >= _config.G51 {
+			if s.erupeConfig.RealClientMode >= cfg.G51 {
 				bf.WriteUint8(0) // Ignored
 			}
 			bf.WriteBytes(stringsupport.PaddedString(string(fullName), 65, false))
 		}
 
-		if s.erupeConfig.RealClientMode >= _config.GG {
+		if s.erupeConfig.RealClientMode >= cfg.GG {
 			bf.WriteUint32(si.AllowedClientFlags)
 		}
 
 		for channelIdx, ci := range si.Channels {
 			sid := (serverIdx<<8 | 4096) + (channelIdx | 16)
-			if _config.ErupeConfig.DebugOptions.ProxyPort != 0 {
-				bf.WriteUint16(_config.ErupeConfig.DebugOptions.ProxyPort)
+			if config.DebugOptions.ProxyPort != 0 {
+				bf.WriteUint16(config.DebugOptions.ProxyPort)
 			} else {
 				bf.WriteUint16(ci.Port)
 			}
 			bf.WriteUint16(uint16(channelIdx | 16))
 			bf.WriteUint16(ci.MaxPlayers)
 			var currentPlayers uint16
-			s.db.QueryRow("SELECT current_players FROM servers WHERE server_id=$1", sid).Scan(&currentPlayers)
+			if s.serverRepo != nil {
+				currentPlayers, _ = s.serverRepo.GetCurrentPlayers(sid)
+			}
 			bf.WriteUint16(currentPlayers)
 			bf.WriteUint16(0)
 			bf.WriteUint16(0)
@@ -85,7 +87,7 @@ func encodeServerInfo(config *_config.Config, s *Server, local bool) []byte {
 			bf.WriteUint16(12345)
 		}
 	}
-	bf.WriteUint32(uint32(channelserver.TimeAdjusted().Unix()))
+	bf.WriteUint32(uint32(gametime.Adjusted().Unix()))
 
 	// ClanMemberLimits requires at least 1 element with 2 columns to avoid index out of range panics
 	// Use default value (60) if array is empty or last row is too small
@@ -119,11 +121,11 @@ func makeHeader(data []byte, respType string, entryCount uint16, key byte) []byt
 	return bf.Data()
 }
 
-func makeSv2Resp(config *_config.Config, s *Server, local bool) []byte {
+func makeSv2Resp(config *cfg.Config, s *Server, local bool) []byte {
 	serverInfos := config.Entrance.Entries
 	// Decrease by the number of MezFes Worlds
 	var mf int
-	if config.RealClientMode <= _config.Z1 {
+	if config.RealClientMode <= cfg.Z1 {
 		for _, si := range serverInfos {
 			if si.Type == 6 {
 				mf++
@@ -132,7 +134,7 @@ func makeSv2Resp(config *_config.Config, s *Server, local bool) []byte {
 	}
 	// and Return Worlds
 	var ret int
-	if config.RealClientMode <= _config.G6 {
+	if config.RealClientMode <= cfg.G6 {
 		for _, si := range serverInfos {
 			if si.Type == 5 {
 				ret++
@@ -142,11 +144,11 @@ func makeSv2Resp(config *_config.Config, s *Server, local bool) []byte {
 	rawServerData := encodeServerInfo(config, s, local)
 
 	if s.erupeConfig.DebugOptions.LogOutboundMessages {
-		fmt.Printf("[Server] -> [Client]\nData [%d bytes]:\n%s\n", len(rawServerData), hex.Dump(rawServerData))
+		s.logger.Debug("Outbound SV2 response", zap.Int("bytes", len(rawServerData)), zap.String("data", hex.Dump(rawServerData)))
 	}
 
 	respType := "SV2"
-	if config.RealClientMode <= _config.G32 {
+	if config.RealClientMode <= cfg.G32 {
 		respType = "SVR"
 	}
 
@@ -164,17 +166,15 @@ func makeUsrResp(pkt []byte, s *Server) []byte {
 	for i := 0; i < int(userEntries); i++ {
 		cid := bf.ReadUint32()
 		var sid uint16
-		err := s.db.QueryRow("SELECT(SELECT server_id FROM sign_sessions WHERE char_id=$1) AS _", cid).Scan(&sid)
-		if err != nil {
-			resp.WriteUint16(0)
-		} else {
-			resp.WriteUint16(sid)
+		if s.sessionRepo != nil {
+			sid, _ = s.sessionRepo.GetServerIDForCharacter(cid)
 		}
+		resp.WriteUint16(sid)
 		resp.WriteUint16(0)
 	}
 
 	if s.erupeConfig.DebugOptions.LogOutboundMessages {
-		fmt.Printf("[Server] -> [Client]\nData [%d bytes]:\n%s\n", len(resp.Data()), hex.Dump(resp.Data()))
+		s.logger.Debug("Outbound USR response", zap.Int("bytes", len(resp.Data())), zap.String("data", hex.Dump(resp.Data())))
 	}
 
 	return makeHeader(resp.Data(), "USR", userEntries, 0x00)

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"erupe-ce/common/byteframe"
+	cfg "erupe-ce/config"
 	"erupe-ce/network"
 	"erupe-ce/network/clientctx"
 )
@@ -55,10 +56,10 @@ func TestMsgSysCreateStageFields(t *testing.T) {
 			stageIDBytes := []byte(tt.stageID)
 			bf.WriteUint8(uint8(len(stageIDBytes)))
 			bf.WriteBytes(append(stageIDBytes, 0x00))
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgSysCreateStage{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -66,8 +67,8 @@ func TestMsgSysCreateStageFields(t *testing.T) {
 			if pkt.AckHandle != tt.ackHandle {
 				t.Errorf("AckHandle = %d, want %d", pkt.AckHandle, tt.ackHandle)
 			}
-			if pkt.Unk0 != tt.unk0 {
-				t.Errorf("Unk0 = %d, want %d", pkt.Unk0, tt.unk0)
+			if pkt.CreateType != tt.unk0 {
+				t.Errorf("CreateType = %d, want %d", pkt.CreateType, tt.unk0)
 			}
 			if pkt.PlayerCount != tt.playerCount {
 				t.Errorf("PlayerCount = %d, want %d", pkt.PlayerCount, tt.playerCount)
@@ -99,10 +100,10 @@ func TestMsgSysEnterStageFields(t *testing.T) {
 			stageIDBytes := []byte(tt.stageID)
 			bf.WriteUint8(uint8(len(stageIDBytes)))
 			bf.WriteBytes(append(stageIDBytes, 0x00))
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgSysEnterStage{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -110,8 +111,8 @@ func TestMsgSysEnterStageFields(t *testing.T) {
 			if pkt.AckHandle != tt.handle {
 				t.Errorf("AckHandle = %d, want %d", pkt.AckHandle, tt.handle)
 			}
-			if pkt.Unk != tt.unk {
-				t.Errorf("Unk = %v, want %v", pkt.Unk, tt.unk)
+			if pkt.IsQuest != tt.unk {
+				t.Errorf("Unk = %v, want %v", pkt.IsQuest, tt.unk)
 			}
 			if pkt.StageID != tt.stageID {
 				t.Errorf("StageID = %q, want %q", pkt.StageID, tt.stageID)
@@ -139,10 +140,10 @@ func TestMsgSysMoveStageFields(t *testing.T) {
 			stageIDBytes := []byte(tt.stageID)
 			bf.WriteUint8(uint8(len(stageIDBytes)))
 			bf.WriteBytes(stageIDBytes)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgSysMoveStage{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -181,10 +182,10 @@ func TestMsgSysLockStageFields(t *testing.T) {
 			stageIDBytes := []byte(tt.stageID)
 			bf.WriteUint8(uint8(len(stageIDBytes)))
 			bf.WriteBytes(append(stageIDBytes, 0x00))
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgSysLockStage{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -215,10 +216,10 @@ func TestMsgSysUnlockStageFields(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
 			bf.WriteUint16(tt.unk0)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgSysUnlockStage{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -242,10 +243,10 @@ func TestMsgSysBackStageFields(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			bf := byteframe.NewByteFrame()
 			bf.WriteUint32(tt.handle)
-			bf.Seek(0, io.SeekStart)
+			_, _ = bf.Seek(0, io.SeekStart)
 
 			pkt := &MsgSysBackStage{}
-			err := pkt.Parse(bf, &clientctx.ClientContext{})
+			err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -271,10 +272,10 @@ func TestStageIDEdgeCases(t *testing.T) {
 		bf.WriteUint8(4)
 		bf.WriteUint8(uint8(len(longID)))
 		bf.WriteBytes(append(longID, 0x00))
-		bf.Seek(0, io.SeekStart)
+		_, _ = bf.Seek(0, io.SeekStart)
 
 		pkt := &MsgSysCreateStage{}
-		err := pkt.Parse(bf, &clientctx.ClientContext{})
+		err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -293,10 +294,10 @@ func TestStageIDEdgeCases(t *testing.T) {
 		bf.WriteUint8(0)
 		bf.WriteUint8(uint8(len(stageID)))
 		bf.WriteBytes([]byte(stageID))
-		bf.Seek(0, io.SeekStart)
+		_, _ = bf.Seek(0, io.SeekStart)
 
 		pkt := &MsgSysEnterStage{}
-		err := pkt.Parse(bf, &clientctx.ClientContext{})
+		err := pkt.Parse(bf, &clientctx.ClientContext{RealClientMode: cfg.ZZ})
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}

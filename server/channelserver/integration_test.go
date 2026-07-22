@@ -2,7 +2,7 @@ package channelserver
 
 import (
 	"encoding/binary"
-	_config "erupe-ce/config"
+	cfg "erupe-ce/config"
 	"erupe-ce/network"
 	"sync"
 	"testing"
@@ -19,22 +19,22 @@ func IntegrationTest_PacketQueueFlow(t *testing.T) {
 	}
 
 	tests := []struct {
-		name         string
-		packetCount  int
-		queueDelay   time.Duration
-		wantPackets  int
+		name        string
+		packetCount int
+		queueDelay  time.Duration
+		wantPackets int
 	}{
 		{
-			name:         "sequential_packets",
-			packetCount:  10,
-			queueDelay:   10 * time.Millisecond,
-			wantPackets:  10,
+			name:        "sequential_packets",
+			packetCount: 10,
+			queueDelay:  10 * time.Millisecond,
+			wantPackets: 10,
 		},
 		{
-			name:         "rapid_fire_packets",
-			packetCount:  50,
-			queueDelay:   1 * time.Millisecond,
-			wantPackets:  50,
+			name:        "rapid_fire_packets",
+			packetCount: 50,
+			queueDelay:  1 * time.Millisecond,
+			wantPackets: 50,
 		},
 	}
 
@@ -44,9 +44,9 @@ func IntegrationTest_PacketQueueFlow(t *testing.T) {
 
 			s := &Session{
 				sendPackets: make(chan packet, 100),
-					server: &Server{
-					erupeConfig: &_config.Config{
-						DebugOptions: _config.DebugOptions{
+				server: &Server{
+					erupeConfig: &cfg.Config{
+						DebugOptions: cfg.DebugOptions{
 							LogOutboundMessages: false,
 						},
 					},
@@ -84,7 +84,13 @@ func IntegrationTest_PacketQueueFlow(t *testing.T) {
 
 		done:
 			s.closed.Store(true)
-			time.Sleep(50 * time.Millisecond)
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				if mock.PacketCount() >= tt.wantPackets {
+					break
+				}
+				time.Sleep(1 * time.Millisecond)
+			}
 
 			sentPackets := mock.GetSentPackets()
 			if len(sentPackets) != tt.wantPackets {
@@ -119,14 +125,14 @@ func IntegrationTest_ConcurrentQueueing(t *testing.T) {
 	s := &Session{
 		sendPackets: make(chan packet, 200),
 		server: &Server{
-			erupeConfig: &_config.Config{
-				DebugOptions: _config.DebugOptions{
+			erupeConfig: &cfg.Config{
+				DebugOptions: cfg.DebugOptions{
 					LogOutboundMessages: false,
 				},
 			},
 		},
 	}
-		s.cryptConn = mock
+	s.cryptConn = mock
 
 	go s.sendLoop()
 
@@ -175,7 +181,13 @@ func IntegrationTest_ConcurrentQueueing(t *testing.T) {
 
 done:
 	s.closed.Store(true)
-	time.Sleep(50 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mock.PacketCount() >= expectedTotal {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 
 	sentPackets := mock.GetSentPackets()
 	if len(sentPackets) != expectedTotal {
@@ -217,14 +229,14 @@ func IntegrationTest_AckPacketFlow(t *testing.T) {
 	s := &Session{
 		sendPackets: make(chan packet, 100),
 		server: &Server{
-			erupeConfig: &_config.Config{
-				DebugOptions: _config.DebugOptions{
+			erupeConfig: &cfg.Config{
+				DebugOptions: cfg.DebugOptions{
 					LogOutboundMessages: false,
 				},
 			},
 		},
 	}
-		s.cryptConn = mock
+	s.cryptConn = mock
 
 	go s.sendLoop()
 
@@ -237,9 +249,14 @@ func IntegrationTest_AckPacketFlow(t *testing.T) {
 	}
 
 	// Wait for ACKs to be sent
-	time.Sleep(200 * time.Millisecond)
 	s.closed.Store(true)
-	time.Sleep(50 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mock.PacketCount() >= ackCount {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 
 	sentPackets := mock.GetSentPackets()
 	if len(sentPackets) != ackCount {
@@ -282,14 +299,14 @@ func IntegrationTest_MixedPacketTypes(t *testing.T) {
 	s := &Session{
 		sendPackets: make(chan packet, 100),
 		server: &Server{
-			erupeConfig: &_config.Config{
-				DebugOptions: _config.DebugOptions{
+			erupeConfig: &cfg.Config{
+				DebugOptions: cfg.DebugOptions{
 					LogOutboundMessages: false,
 				},
 			},
 		},
 	}
-		s.cryptConn = mock
+	s.cryptConn = mock
 
 	go s.sendLoop()
 
@@ -307,9 +324,14 @@ func IntegrationTest_MixedPacketTypes(t *testing.T) {
 	s.QueueSendNonBlocking([]byte{0x00, 0x03, 0xEE})
 
 	// Wait for all packets
-	time.Sleep(200 * time.Millisecond)
 	s.closed.Store(true)
-	time.Sleep(50 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mock.PacketCount() >= 4 {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 
 	sentPackets := mock.GetSentPackets()
 	if len(sentPackets) != 4 {
@@ -338,14 +360,14 @@ func IntegrationTest_PacketOrderPreservation(t *testing.T) {
 	s := &Session{
 		sendPackets: make(chan packet, 100),
 		server: &Server{
-			erupeConfig: &_config.Config{
-				DebugOptions: _config.DebugOptions{
+			erupeConfig: &cfg.Config{
+				DebugOptions: cfg.DebugOptions{
 					LogOutboundMessages: false,
 				},
 			},
 		},
 	}
-		s.cryptConn = mock
+	s.cryptConn = mock
 
 	go s.sendLoop()
 
@@ -357,9 +379,14 @@ func IntegrationTest_PacketOrderPreservation(t *testing.T) {
 	}
 
 	// Wait for packets
-	time.Sleep(300 * time.Millisecond)
 	s.closed.Store(true)
-	time.Sleep(50 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mock.PacketCount() >= packetCount {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 
 	sentPackets := mock.GetSentPackets()
 	if len(sentPackets) != packetCount {
@@ -395,15 +422,15 @@ func IntegrationTest_QueueBackpressure(t *testing.T) {
 	s := &Session{
 		sendPackets: make(chan packet, 5),
 		server: &Server{
-			erupeConfig: &_config.Config{
-				DebugOptions: _config.DebugOptions{
+			erupeConfig: &cfg.Config{
+				DebugOptions: cfg.DebugOptions{
 					LogOutboundMessages: false,
 				},
 				LoopDelay: 50, // Slower processing to create backpressure
 			},
 		},
 	}
-		s.cryptConn = mock
+	s.cryptConn = mock
 
 	go s.sendLoop()
 
@@ -423,9 +450,14 @@ func IntegrationTest_QueueBackpressure(t *testing.T) {
 	}
 
 	// Wait for processing
-	time.Sleep(1 * time.Second)
 	s.closed.Store(true)
-	time.Sleep(50 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mock.PacketCount() > 0 {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 
 	// Some packets should have been sent
 	sentCount := mock.PacketCount()
@@ -443,10 +475,10 @@ func IntegrationTest_GuildEnumerationFlow(t *testing.T) {
 	}
 
 	tests := []struct {
-		name         string
-		guildCount   int
+		name            string
+		guildCount      int
 		membersPerGuild int
-		wantValid    bool
+		wantValid       bool
 	}{
 		{
 			name:            "single_guild",
@@ -502,7 +534,13 @@ func IntegrationTest_GuildEnumerationFlow(t *testing.T) {
 
 		done:
 			s.closed.Store(true)
-			time.Sleep(50 * time.Millisecond)
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				if mock.PacketCount() >= tt.guildCount {
+					break
+				}
+				time.Sleep(1 * time.Millisecond)
+			}
 
 			sentPackets := mock.GetSentPackets()
 			if len(sentPackets) != tt.guildCount {
@@ -530,22 +568,22 @@ func IntegrationTest_ConcurrentClientAccess(t *testing.T) {
 	}
 
 	tests := []struct {
-		name            string
+		name              string
 		concurrentClients int
 		packetsPerClient  int
 		wantTotalPackets  int
 	}{
 		{
-			name:             "two_concurrent_clients",
+			name:              "two_concurrent_clients",
 			concurrentClients: 2,
 			packetsPerClient:  5,
-			wantTotalPackets: 10,
+			wantTotalPackets:  10,
 		},
 		{
-			name:             "five_concurrent_clients",
+			name:              "five_concurrent_clients",
 			concurrentClients: 5,
 			packetsPerClient:  10,
-			wantTotalPackets: 50,
+			wantTotalPackets:  50,
 		},
 	}
 
@@ -571,9 +609,21 @@ func IntegrationTest_ConcurrentClientAccess(t *testing.T) {
 						s.QueueSend(testData)
 					}
 
-					time.Sleep(100 * time.Millisecond)
+					deadline := time.Now().Add(2 * time.Second)
+					for time.Now().Before(deadline) {
+						if mock.PacketCount() >= tt.packetsPerClient {
+							break
+						}
+						time.Sleep(1 * time.Millisecond)
+					}
 					s.closed.Store(true)
-					time.Sleep(50 * time.Millisecond)
+					deadline = time.Now().Add(2 * time.Second)
+					for time.Now().Before(deadline) {
+						if mock.PacketCount() >= tt.packetsPerClient {
+							break
+						}
+						time.Sleep(1 * time.Millisecond)
+					}
 
 					sentCount := mock.PacketCount()
 					mu.Lock()
@@ -599,38 +649,35 @@ func IntegrationTest_ClientVersionCompatibility(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		clientVersion _config.Mode
+		clientVersion cfg.Mode
 		shouldSucceed bool
 	}{
 		{
 			name:          "version_z2",
-			clientVersion: _config.Z2,
+			clientVersion: cfg.Z2,
 			shouldSucceed: true,
 		},
 		{
 			name:          "version_s6",
-			clientVersion: _config.S6,
+			clientVersion: cfg.S6,
 			shouldSucceed: true,
 		},
 		{
 			name:          "version_g32",
-			clientVersion: _config.G32,
+			clientVersion: cfg.G32,
 			shouldSucceed: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			originalVersion := _config.ErupeConfig.RealClientMode
-			defer func() { _config.ErupeConfig.RealClientMode = originalVersion }()
-
-			_config.ErupeConfig.RealClientMode = tt.clientVersion
-
 			mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 			s := &Session{
 				sendPackets: make(chan packet, 100),
-					server: &Server{
-					erupeConfig: _config.ErupeConfig,
+				server: &Server{
+					erupeConfig: &cfg.Config{
+						RealClientMode: tt.clientVersion,
+					},
 				},
 			}
 			s.cryptConn = mock
@@ -641,9 +688,21 @@ func IntegrationTest_ClientVersionCompatibility(t *testing.T) {
 			testData := []byte{0x00, 0x01, 0xAA, 0xBB}
 			s.QueueSend(testData)
 
-			time.Sleep(100 * time.Millisecond)
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				if mock.PacketCount() >= 1 {
+					break
+				}
+				time.Sleep(1 * time.Millisecond)
+			}
 			s.closed.Store(true)
-			time.Sleep(50 * time.Millisecond)
+			deadline = time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				if mock.PacketCount() >= 1 {
+					break
+				}
+				time.Sleep(1 * time.Millisecond)
+			}
 
 			sentCount := mock.PacketCount()
 			if (sentCount > 0) != tt.shouldSucceed {
@@ -677,9 +736,14 @@ func IntegrationTest_PacketPrioritization(t *testing.T) {
 		s.QueueSend([]byte{0x00, byte(i), 0xDD})
 	}
 
-	time.Sleep(200 * time.Millisecond)
 	s.closed.Store(true)
-	time.Sleep(50 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mock.PacketCount() >= 10 {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 
 	sentPackets := mock.GetSentPackets()
 	if len(sentPackets) < 10 {
@@ -735,7 +799,13 @@ func IntegrationTest_DataIntegrityUnderLoad(t *testing.T) {
 
 done:
 	s.closed.Store(true)
-	time.Sleep(50 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if mock.PacketCount() >= packetCount {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
 
 	sentPackets := mock.GetSentPackets()
 	if len(sentPackets) != packetCount {

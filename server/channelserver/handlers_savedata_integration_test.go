@@ -3,9 +3,9 @@ package channelserver
 import (
 	"bytes"
 	"testing"
-	"time"
 
 	"erupe-ce/common/mhfitem"
+	cfg "erupe-ce/config"
 	"erupe-ce/network/mhfpacket"
 	"erupe-ce/server/channelserver/compression/nullcomp"
 )
@@ -27,25 +27,25 @@ func TestSaveLoad_RoadPoints(t *testing.T) {
 	defer TeardownTestDB(t, db)
 
 	userID := CreateTestUser(t, db, "testuser")
-	charID := CreateTestCharacter(t, db, userID, "TestChar")
+	_ = CreateTestCharacter(t, db, userID, "TestChar")
 
-	// Set initial Road Points
+	// Set initial Road Points (frontier_points is on the users table since 9.2 migration)
 	initialPoints := uint32(1000)
-	_, err := db.Exec("UPDATE characters SET frontier_points = $1 WHERE id = $2", initialPoints, charID)
+	_, err := db.Exec("UPDATE users SET frontier_points = $1 WHERE id = $2", initialPoints, userID)
 	if err != nil {
 		t.Fatalf("Failed to set initial road points: %v", err)
 	}
 
 	// Modify Road Points
 	newPoints := uint32(2500)
-	_, err = db.Exec("UPDATE characters SET frontier_points = $1 WHERE id = $2", newPoints, charID)
+	_, err = db.Exec("UPDATE users SET frontier_points = $1 WHERE id = $2", newPoints, userID)
 	if err != nil {
 		t.Fatalf("Failed to update road points: %v", err)
 	}
 
 	// Verify Road Points persisted
 	var savedPoints uint32
-	err = db.QueryRow("SELECT frontier_points FROM characters WHERE id = $1", charID).Scan(&savedPoints)
+	err = db.QueryRow("SELECT frontier_points FROM users WHERE id = $1", userID).Scan(&savedPoints)
 	if err != nil {
 		t.Fatalf("Failed to query road points: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestSaveLoad_HunterNavi(t *testing.T) {
 	mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 	s := createTestSession(mock)
 	s.charID = charID
-	s.server.db = db
+	SetTestDB(s.server, db)
 
 	// Create Hunter Navi data
 	naviData := make([]byte, 552) // G8+ size
@@ -116,11 +116,11 @@ func TestSaveLoad_MonsterKillCounter(t *testing.T) {
 	mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 	s := createTestSession(mock)
 	s.charID = charID
-	s.server.db = db
+	SetTestDB(s.server, db)
 
 	// Initial Koryo points
 	initialPoints := uint32(0)
-	err := db.QueryRow("SELECT kouryou_point FROM characters WHERE id = $1", charID).Scan(&initialPoints)
+	err := db.QueryRow("SELECT COALESCE(kouryou_point, 0) FROM characters WHERE id = $1", charID).Scan(&initialPoints)
 	if err != nil {
 		t.Fatalf("Failed to query initial koryo points: %v", err)
 	}
@@ -197,28 +197,30 @@ func TestSaveLoad_Warehouse(t *testing.T) {
 	userID := CreateTestUser(t, db, "testuser")
 	charID := CreateTestCharacter(t, db, userID, "TestChar")
 
-	// Create test equipment for warehouse
+	// Create test equipment for warehouse (Decorations and Sigils must be initialized)
+	newEquip := func(id uint16, wid uint32) mhfitem.MHFEquipment {
+		e := mhfitem.MHFEquipment{ItemID: id, WarehouseID: wid}
+		e.Decorations = make([]mhfitem.MHFItem, 3)
+		e.Sigils = make([]mhfitem.MHFSigil, 3)
+		for i := range e.Sigils {
+			e.Sigils[i].Effects = make([]mhfitem.MHFSigilEffect, 3)
+		}
+		return e
+	}
 	equipment := []mhfitem.MHFEquipment{
-		{ItemID: 100, WarehouseID: 1},
-		{ItemID: 101, WarehouseID: 2},
-		{ItemID: 102, WarehouseID: 3},
+		newEquip(100, 1),
+		newEquip(101, 2),
+		newEquip(102, 3),
 	}
 
 	// Serialize and save to warehouse
-	serializedEquip := mhfitem.SerializeWarehouseEquipment(equipment)
+	serializedEquip := mhfitem.SerializeWarehouseEquipment(equipment, cfg.ZZ)
 
-	// Update warehouse equip0
+	// Initialize warehouse row then update
+	_, _ = db.Exec("INSERT INTO warehouse (character_id) VALUES ($1) ON CONFLICT DO NOTHING", charID)
 	_, err := db.Exec("UPDATE warehouse SET equip0 = $1 WHERE character_id = $2", serializedEquip, charID)
 	if err != nil {
-		// Warehouse entry might not exist, try insert
-		_, err = db.Exec(`
-			INSERT INTO warehouse (character_id, equip0)
-			VALUES ($1, $2)
-			ON CONFLICT (character_id) DO UPDATE SET equip0 = $2
-		`, charID, serializedEquip)
-		if err != nil {
-			t.Fatalf("Failed to save warehouse: %v", err)
-		}
+		t.Fatalf("Failed to save warehouse: %v", err)
 	}
 
 	// Reload warehouse
@@ -252,7 +254,7 @@ func TestSaveLoad_CurrentEquipment(t *testing.T) {
 	s := createTestSession(mock)
 	s.charID = charID
 	s.Name = "TestChar"
-	s.server.db = db
+	SetTestDB(s.server, db)
 
 	// Create savedata with equipped gear
 	// Equipment data is embedded in the main savedata blob
@@ -260,7 +262,7 @@ func TestSaveLoad_CurrentEquipment(t *testing.T) {
 	copy(saveData[88:], []byte("TestChar\x00"))
 
 	// Set weapon type at known offset (simplified)
-	weaponTypeOffset := 500 // Example offset
+	weaponTypeOffset := 500           // Example offset
 	saveData[weaponTypeOffset] = 0x03 // Great Sword
 
 	compressed, err := nullcomp.Compress(saveData)
@@ -366,13 +368,18 @@ func TestSaveLoad_Transmog(t *testing.T) {
 	mock := &MockCryptConn{sentPackets: make([][]byte, 0)}
 	s := createTestSession(mock)
 	s.charID = charID
-	s.server.db = db
+	SetTestDB(s.server, db)
 
-	// Create transmog/decoration set data
-	transmogData := make([]byte, 100)
-	for i := range transmogData {
-		transmogData[i] = byte((i * 3) % 256)
-	}
+	// Create valid transmog/decoration set data
+	// Format: [version byte][count byte][count * (uint16 index + setSize bytes)]
+	// setSize is 76 for G10+, 68 otherwise
+	setSize := 76 // G10+
+	numSets := 1
+	transmogData := make([]byte, 2+numSets*(2+setSize))
+	transmogData[0] = 1             // version
+	transmogData[1] = byte(numSets) // count
+	transmogData[2] = 0             // index high byte
+	transmogData[3] = 1             // index low byte (set #1)
 
 	// Save transmog data
 	pkt := &mhfpacket.MsgMhfSaveDecoMyset{
@@ -409,23 +416,20 @@ func TestSaveLoad_CraftedEquipment(t *testing.T) {
 	// Crafted equipment would be stored in savedata or warehouse
 	// Let's test warehouse equipment with upgrade levels
 
-	// Create crafted equipment with upgrade level
-	equipment := []mhfitem.MHFEquipment{
-		{
-			ItemID:      5000, // Crafted weapon
-			WarehouseID: 12345,
-			// Upgrade level would be in equipment metadata
-		},
+	// Create crafted equipment with upgrade level (Decorations and Sigils must be initialized)
+	equip := mhfitem.MHFEquipment{ItemID: 5000, WarehouseID: 12345}
+	equip.Decorations = make([]mhfitem.MHFItem, 3)
+	equip.Sigils = make([]mhfitem.MHFSigil, 3)
+	for i := range equip.Sigils {
+		equip.Sigils[i].Effects = make([]mhfitem.MHFSigilEffect, 3)
 	}
+	equipment := []mhfitem.MHFEquipment{equip}
 
-	serialized := mhfitem.SerializeWarehouseEquipment(equipment)
+	serialized := mhfitem.SerializeWarehouseEquipment(equipment, cfg.ZZ)
 
 	// Save to warehouse
-	_, err := db.Exec(`
-		INSERT INTO warehouse (character_id, equip0)
-		VALUES ($1, $2)
-		ON CONFLICT (character_id) DO UPDATE SET equip0 = $2
-	`, charID, serialized)
+	_, _ = db.Exec("INSERT INTO warehouse (character_id) VALUES ($1) ON CONFLICT DO NOTHING", charID)
+	_, err := db.Exec("UPDATE warehouse SET equip0 = $1 WHERE character_id = $2", serialized, charID)
 	if err != nil {
 		t.Fatalf("Failed to save crafted equipment: %v", err)
 	}
@@ -461,11 +465,11 @@ func TestSaveLoad_CompleteSaveLoadCycle(t *testing.T) {
 	s := createTestSession(mock)
 	s.charID = charID
 	s.Name = "SaveLoadTest"
-	s.server.db = db
+	SetTestDB(s.server, db)
 
-	// 1. Set Road Points
+	// 1. Set Road Points (frontier_points is on the users table since 9.2 migration)
 	rdpPoints := uint32(5000)
-	_, err := db.Exec("UPDATE characters SET frontier_points = $1 WHERE id = $2", rdpPoints, charID)
+	_, err := db.Exec("UPDATE users SET frontier_points = $1 WHERE id = $2", rdpPoints, userID)
 	if err != nil {
 		t.Fatalf("Failed to set RdP: %v", err)
 	}
@@ -501,8 +505,8 @@ func TestSaveLoad_CompleteSaveLoadCycle(t *testing.T) {
 	mock2 := &MockCryptConn{sentPackets: make([][]byte, 0)}
 	s2 := createTestSession(mock2)
 	s2.charID = charID
-	s2.server.db = db
-	s2.server.userBinaryParts = make(map[userBinaryPartID][]byte)
+	SetTestDB(s2.server, db)
+	s2.server.userBinary = NewUserBinaryStore()
 
 	// Load character data
 	loadPkt := &mhfpacket.MsgMhfLoaddata{
@@ -515,9 +519,9 @@ func TestSaveLoad_CompleteSaveLoadCycle(t *testing.T) {
 		t.Errorf("Character name not loaded correctly: got %q, want %q", s2.Name, "SaveLoadTest")
 	}
 
-	// Verify Road Points persisted
+	// Verify Road Points persisted (frontier_points is on users table)
 	var loadedRdP uint32
-	db.QueryRow("SELECT frontier_points FROM characters WHERE id = $1", charID).Scan(&loadedRdP)
+	_ = db.QueryRow("SELECT frontier_points FROM users WHERE id = $1", userID).Scan(&loadedRdP)
 	if loadedRdP != rdpPoints {
 		t.Errorf("RdP not persisted: got %d, want %d (BUG CONFIRMED)", loadedRdP, rdpPoints)
 	} else {
@@ -526,7 +530,7 @@ func TestSaveLoad_CompleteSaveLoadCycle(t *testing.T) {
 
 	// Verify Koryo Points persisted
 	var loadedKoryo uint32
-	db.QueryRow("SELECT kouryou_point FROM characters WHERE id = $1", charID).Scan(&loadedKoryo)
+	_ = db.QueryRow("SELECT kouryou_point FROM characters WHERE id = $1", charID).Scan(&loadedKoryo)
 	if loadedKoryo != koryoPoints {
 		t.Errorf("Koryo points not persisted: got %d, want %d (BUG CONFIRMED)", loadedKoryo, koryoPoints)
 	} else {
@@ -611,9 +615,6 @@ func TestPlateDataPersistenceDuringLogout(t *testing.T) {
 	// 4. Simulate logout (this should call savePlateDataToDatabase via saveAllCharacterData)
 	t.Log("Triggering logout via logoutPlayer")
 	logoutPlayer(session)
-
-	// Give logout time to complete
-	time.Sleep(100 * time.Millisecond)
 
 	// ===== VERIFICATION: Check all plate data was saved =====
 	t.Log("--- Verifying plate data persisted ---")

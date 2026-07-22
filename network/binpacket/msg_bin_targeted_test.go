@@ -308,7 +308,7 @@ func TestMsgBinTargeted_TargetCountMismatch(t *testing.T) {
 	// Test that TargetCount and actual array length don't have to match
 	// The Build function uses the TargetCount field
 	msg := &MsgBinTargeted{
-		TargetCount:    2, // Says 2
+		TargetCount:    2,                       // Says 2
 		TargetCharIDs:  []uint32{100, 200, 300}, // But has 3
 		RawDataPayload: []byte{0x01},
 	}

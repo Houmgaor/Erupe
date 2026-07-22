@@ -67,11 +67,11 @@ func TestUserIDFromTokenScenarios(t *testing.T) {
 // TestGetReturnExpiryCalculation tests the return expiry calculation logic
 func TestGetReturnExpiryCalculation(t *testing.T) {
 	tests := []struct {
-		name          string
-		lastLogin     time.Time
-		currentTime   time.Time
-		shouldUpdate  bool
-		description   string
+		name         string
+		lastLogin    time.Time
+		currentTime  time.Time
+		shouldUpdate bool
+		description  string
 	}{
 		{
 			name:         "RecentLogin",
@@ -126,10 +126,10 @@ func TestGetReturnExpiryCalculation(t *testing.T) {
 // TestCharacterCreationConstraints tests character creation constraints
 func TestCharacterCreationConstraints(t *testing.T) {
 	tests := []struct {
-		name            string
-		currentCount    int
-		allowCreation   bool
-		description     string
+		name          string
+		currentCount  int
+		allowCreation bool
+		description   string
 	}{
 		{
 			name:          "NoCharacters",
@@ -170,22 +170,22 @@ func TestCharacterCreationConstraints(t *testing.T) {
 // TestCharacterDeletionLogic tests the character deletion behavior
 func TestCharacterDeletionLogic(t *testing.T) {
 	tests := []struct {
-		name          string
+		name           string
 		isNewCharacter bool
 		expectedAction string
-		description   string
+		description    string
 	}{
 		{
 			name:           "NewCharacterDeletion",
 			isNewCharacter: true,
 			expectedAction: "DELETE",
-			description:   "New characters should be hard deleted",
+			description:    "New characters should be hard deleted",
 		},
 		{
 			name:           "FinalizedCharacterDeletion",
 			isNewCharacter: false,
 			expectedAction: "SOFT_DELETE",
-			description:   "Finalized characters should be soft deleted (marked as deleted)",
+			description:    "Finalized characters should be soft deleted (marked as deleted)",
 		},
 	}
 
@@ -367,10 +367,10 @@ func TestCreateLoginTokenContext(t *testing.T) {
 // TestPasswordValidation tests password validation logic
 func TestPasswordValidation(t *testing.T) {
 	tests := []struct {
-		name      string
-		password  string
-		isValid   bool
-		reason    string
+		name     string
+		password string
+		isValid  bool
+		reason   string
 	}{
 		{
 			name:     "NormalPassword",

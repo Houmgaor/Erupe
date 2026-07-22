@@ -151,28 +151,101 @@ func TestHandleMsgSysDeleteObject(t *testing.T) {
 	server := createMockServer()
 	session := createMockSession(1, server)
 
-	// Should not panic (empty handler)
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("handleMsgSysDeleteObject panicked: %v", r)
-		}
-	}()
+	stage := NewStage("test_stage")
+	session.stage = stage
 
-	handleMsgSysDeleteObject(session, nil)
+	session2 := createMockSession(2, server)
+	session2.stage = stage
+	stage.clients[session] = session.charID
+	stage.clients[session2] = session2.charID
+
+	stage.objects[session.charID] = &Object{
+		id:          1,
+		ownerCharID: session.charID,
+	}
+
+	handleMsgSysDeleteObject(session, &mhfpacket.MsgSysDeleteObject{ObjID: 1})
+
+	if _, ok := stage.objects[session.charID]; ok {
+		t.Error("object should have been removed from the stage")
+	}
+
+	select {
+	case <-session2.sendPackets:
+		// Good - broadcast received
+	default:
+		t.Error("deletion should be broadcast to other sessions")
+	}
+}
+
+// TestHandleMsgSysDeleteObject_WrongObjID verifies a client can't delete an
+// object it doesn't own by guessing a mismatched ObjID.
+func TestHandleMsgSysDeleteObject_WrongObjID(t *testing.T) {
+	server := createMockServer()
+	session := createMockSession(1, server)
+
+	stage := NewStage("test_stage")
+	session.stage = stage
+	stage.objects[session.charID] = &Object{
+		id:          1,
+		ownerCharID: session.charID,
+	}
+
+	handleMsgSysDeleteObject(session, &mhfpacket.MsgSysDeleteObject{ObjID: 999})
+
+	if _, ok := stage.objects[session.charID]; !ok {
+		t.Error("object should not have been removed for a mismatched ObjID")
+	}
 }
 
 func TestHandleMsgSysRotateObject(t *testing.T) {
 	server := createMockServer()
 	session := createMockSession(1, server)
 
-	// Should not panic (empty handler)
+	stage := NewStage("test_stage")
+	session.stage = stage
+
+	session2 := createMockSession(2, server)
+	session2.stage = stage
+	stage.clients[session] = session.charID
+	stage.clients[session2] = session2.charID
+
+	stage.objects[session.charID] = &Object{
+		id:          1,
+		ownerCharID: session.charID,
+	}
+
+	pkt := &mhfpacket.MsgSysRotateObject{ObjID: 1, Rotation: 1.5707963}
+	handleMsgSysRotateObject(session, pkt)
+
+	obj := stage.objects[session.charID]
+	if obj.rotation != 1.5707963 {
+		t.Errorf("Object rotation not updated: got %f, want 1.5707963", obj.rotation)
+	}
+
+	select {
+	case <-session2.sendPackets:
+		// Good - broadcast received
+	default:
+		t.Error("Rotation update should be broadcast to other sessions")
+	}
+}
+
+func TestHandleMsgSysRotateObject_NoObject(t *testing.T) {
+	server := createMockServer()
+	session := createMockSession(1, server)
+
+	stage := NewStage("test_stage")
+	session.stage = stage
+	stage.clients[session] = session.charID
+
 	defer func() {
 		if r := recover(); r != nil {
-			t.Errorf("handleMsgSysRotateObject panicked: %v", r)
+			t.Errorf("handleMsgSysRotateObject panicked with non-existent object: %v", r)
 		}
 	}()
 
-	handleMsgSysRotateObject(session, nil)
+	handleMsgSysRotateObject(session, &mhfpacket.MsgSysRotateObject{ObjID: 999, Rotation: 0})
 }
 
 func TestHandleMsgSysDuplicateObject(t *testing.T) {
@@ -192,29 +265,58 @@ func TestHandleMsgSysDuplicateObject(t *testing.T) {
 func TestHandleMsgSysGetObjectBinary(t *testing.T) {
 	server := createMockServer()
 	session := createMockSession(1, server)
+	stage := NewStage("test_stage")
+	session.stage = stage
 
-	// Should not panic (empty handler)
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("handleMsgSysGetObjectBinary panicked: %v", r)
+	handleMsgSysGetObjectBinary(session, &mhfpacket.MsgSysGetObjectBinary{AckHandle: 42, ObjID: 1})
+
+	select {
+	case p := <-session.sendPackets:
+		if len(p.data) == 0 {
+			t.Error("Response packet should have data (the ack header, even with an empty payload)")
 		}
-	}()
-
-	handleMsgSysGetObjectBinary(session, nil)
+	default:
+		t.Error("No response packet queued")
+	}
 }
 
 func TestHandleMsgSysGetObjectOwner(t *testing.T) {
 	server := createMockServer()
 	session := createMockSession(1, server)
 
-	// Should not panic (empty handler)
+	stage := NewStage("test_stage")
+	session.stage = stage
+	stage.objects[session.charID] = &Object{
+		id:          1,
+		ownerCharID: session.charID,
+	}
+
+	handleMsgSysGetObjectOwner(session, &mhfpacket.MsgSysGetObjectOwner{AckHandle: 42, ObjID: 1})
+
+	select {
+	case p := <-session.sendPackets:
+		if len(p.data) == 0 {
+			t.Error("Response packet should have data")
+		}
+	default:
+		t.Error("No response packet queued")
+	}
+}
+
+func TestHandleMsgSysGetObjectOwner_NotFound(t *testing.T) {
+	server := createMockServer()
+	session := createMockSession(1, server)
+
+	stage := NewStage("test_stage")
+	session.stage = stage
+
 	defer func() {
 		if r := recover(); r != nil {
-			t.Errorf("handleMsgSysGetObjectOwner panicked: %v", r)
+			t.Errorf("handleMsgSysGetObjectOwner panicked for unknown ObjID: %v", r)
 		}
 	}()
 
-	handleMsgSysGetObjectOwner(session, nil)
+	handleMsgSysGetObjectOwner(session, &mhfpacket.MsgSysGetObjectOwner{AckHandle: 42, ObjID: 999})
 }
 
 func TestHandleMsgSysUpdateObjectBinary(t *testing.T) {
@@ -306,8 +408,7 @@ func TestObjectHandlers_SequentialCreateObject(t *testing.T) {
 	stage := NewStage("test_stage")
 
 	// Create objects sequentially from multiple sessions
-	// Note: handleMsgSysCreateObject has a race condition in NextObjectID
-	// so we test sequential creation instead
+	// Test sequential object creation across multiple sessions
 	for i := 0; i < 10; i++ {
 		session := createMockSession(uint32(i), server)
 		session.stage = stage
@@ -368,5 +469,58 @@ func TestObjectHandlers_SequentialPositionUpdate(t *testing.T) {
 	if obj.x != 9 || obj.y != 18 || obj.z != 27 {
 		t.Errorf("Object position not as expected: got (%f, %f, %f), want (9, 18, 27)",
 			obj.x, obj.y, obj.z)
+	}
+}
+
+// Tests consolidated from handlers_coverage3_test.go
+
+func TestEmptyHandlers_ObjectGo(t *testing.T) {
+	server := createMockServer()
+	session := createMockSession(1, server)
+
+	tests := []struct {
+		name string
+		fn   func()
+	}{
+		{"handleMsgSysDuplicateObject", func() { handleMsgSysDuplicateObject(session, nil) }},
+		{"handleMsgSysUpdateObjectBinary", func() { handleMsgSysUpdateObjectBinary(session, nil) }},
+		{"handleMsgSysCleanupObject", func() { handleMsgSysCleanupObject(session, nil) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("%s panicked: %v", tt.name, r)
+				}
+			}()
+			tt.fn()
+		})
+	}
+}
+
+func TestEmptyHandlers_MiscFiles_Object(t *testing.T) {
+	server := createMockServer()
+	session := createMockSession(1, server)
+
+	tests := []struct {
+		name string
+		fn   func()
+	}{
+		{"handleMsgSysAddObject", func() { handleMsgSysAddObject(session, nil) }},
+		{"handleMsgSysDelObject", func() { handleMsgSysDelObject(session, nil) }},
+		{"handleMsgSysDispObject", func() { handleMsgSysDispObject(session, nil) }},
+		{"handleMsgSysHideObject", func() { handleMsgSysHideObject(session, nil) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("%s panicked: %v", tt.name, r)
+				}
+			}()
+			tt.fn()
+		})
 	}
 }
