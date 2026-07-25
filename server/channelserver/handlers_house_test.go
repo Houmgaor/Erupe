@@ -1,6 +1,7 @@
 package channelserver
 
 import (
+	"bytes"
 	"erupe-ce/common/byteframe"
 	"erupe-ce/common/mhfitem"
 	"erupe-ce/common/token"
@@ -328,12 +329,17 @@ func TestLoadHouse_OwnHouse_Destination9(t *testing.T) {
 	}
 }
 
-// TestLoadHouse_OwnHouse_NilFurniture_FailsCleanly is a regression test for
-// issue #192: a freshly-created character has house_furniture=NULL until
-// they place something, and the ZZ client crashes on the 20-zero-byte
-// placeholder that used to be sent in that case. The handler must now fail
-// the request cleanly instead of sending an unparseable payload.
-func TestLoadHouse_OwnHouse_NilFurniture_FailsCleanly(t *testing.T) {
+// TestLoadHouse_OwnHouse_NilFurniture_SendsEmptyInterior covers issue #192's
+// second half. A never-decorated character has house_furniture=NULL, and the
+// 20 zero bytes Erupe used to send for that case crash the ZZ client ~1s
+// later, because a zero furniture slot is a real table index rather than an
+// empty slot. bc52649f stopped the crash with a failed ACK, which left the
+// house unreachable -- and since house_furniture is only ever written from
+// inside the house, unreachable meant permanently NULL.
+//
+// The handler must now answer with the empty-interior record the client itself
+// uses (see defaultHouseInterior for the Wii U symbols this was read off).
+func TestLoadHouse_OwnHouse_NilFurniture_SendsEmptyInterior(t *testing.T) {
 	_, _, session, charID := setupHouseTest(t)
 	// No UpdateInterior call: house_furniture stays NULL, as for any
 	// never-decorated character.
@@ -346,8 +352,41 @@ func TestLoadHouse_OwnHouse_NilFurniture_FailsCleanly(t *testing.T) {
 	handleMsgMhfLoadHouse(session, pkt)
 
 	ack := readAck(t, session)
-	if ack.ErrorCode == 0 {
-		t.Fatal("expected a fail ACK for nil house_furniture, got success (this is the #192 crash payload)")
+	if ack.ErrorCode != 0 {
+		t.Fatalf("expected success for nil house_furniture, got error code %d "+
+			"(a failed ACK here is what left the house unreachable)", ack.ErrorCode)
+	}
+	if !ack.IsBufferResponse {
+		t.Fatal("expected buffer response")
+	}
+	want := []byte{
+		0x00, 0x00, 0x00, 0x00, // remodel bitfield: nothing applied
+		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // six empty furniture slots
+		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+		0xFF, 0xFF, 0xFF, 0xFF, // the two u16s the client reads and discards
+	}
+	if !bytes.Equal(ack.Payload, want) {
+		t.Errorf("empty interior payload = % x, want % x", ack.Payload, want)
+	}
+}
+
+// TestDefaultHouseInterior_Layout pins the record's shape independently of the
+// handler: exactly 20 bytes, because that is what the client's parser consumes
+// (snj_db_analyze_interior returns 0x14), and no zero-valued furniture slot,
+// because zero is a valid furniture index and is what crashed the client.
+func TestDefaultHouseInterior_Layout(t *testing.T) {
+	got := defaultHouseInterior()
+	if len(got) != interiorRecordSize {
+		t.Fatalf("len = %d, want %d", len(got), interiorRecordSize)
+	}
+	bf := byteframe.NewByteFrameFromBytes(got)
+	if remodels := bf.ReadUint32(); remodels != 0 {
+		t.Errorf("remodel bitfield = %#x, want 0", remodels)
+	}
+	for i := 0; i < 8; i++ {
+		if slot := bf.ReadUint16(); slot != interiorEmptySlot {
+			t.Errorf("slot %d = %#x, want %#x", i, slot, interiorEmptySlot)
+		}
 	}
 }
 
