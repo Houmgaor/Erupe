@@ -93,19 +93,36 @@ func createTestEquipment(itemIDs []uint16, warehouseIDs []uint32) []mhfitem.MHFE
 // Unit Tests — guard paths, no database
 // =============================================================================
 
-func TestUpdateInterior_PayloadTooLarge(t *testing.T) {
-	server := createMockServer()
-	session := createMockSession(1, server)
-
-	pkt := &mhfpacket.MsgMhfUpdateInterior{
-		AckHandle:    1,
-		InteriorData: make([]byte, 65), // > 64 triggers guard
+// TestUpdateInterior_RejectsWrongSize checks that only an exactly-sized interior
+// record is accepted. house_furniture is the only server-side copy of the
+// applied-remodel bitfield (the house theme), so storing a short or oversized
+// payload would drop the theme on the next LoadHouse. The handler must still
+// ACK success in every case -- a missing ACK softlocks the client.
+func TestUpdateInterior_RejectsWrongSize(t *testing.T) {
+	sizes := []struct {
+		name string
+		size int
+	}{
+		{"empty", 0},
+		{"truncated", interiorRecordSize - 1},
+		{"oversized", 65},
 	}
-	handleMsgMhfUpdateInterior(session, pkt)
+	for _, tc := range sizes {
+		t.Run(tc.name, func(t *testing.T) {
+			server := createMockServer()
+			session := createMockSession(1, server)
 
-	ack := readAck(t, session)
-	if ack.ErrorCode != 0 {
-		t.Errorf("expected success ACK (guard returns succeed), got error code %d", ack.ErrorCode)
+			pkt := &mhfpacket.MsgMhfUpdateInterior{
+				AckHandle:    1,
+				InteriorData: make([]byte, tc.size),
+			}
+			handleMsgMhfUpdateInterior(session, pkt)
+
+			ack := readAck(t, session)
+			if ack.ErrorCode != 0 {
+				t.Errorf("expected success ACK (guard returns succeed), got error code %d", ack.ErrorCode)
+			}
+		})
 	}
 }
 
@@ -206,7 +223,17 @@ func TestOperateWarehouse_RenameBoxIndexTooHigh(t *testing.T) {
 func TestUpdateInterior_SavesData(t *testing.T) {
 	_, _, session, charID := setupHouseTest(t)
 
-	interiorData := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A}
+	// A real record is always exactly interiorRecordSize bytes: the leading u32
+	// is the applied-remodel bitfield (the house theme), followed by the
+	// furniture slots. MsgMhfUpdateInterior.Parse reads exactly this many.
+	interiorData := []byte{
+		0x00, 0x00, 0x00, 0xBE, // remodel bitfield
+		0xFF, 0xFF, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04, 0x00, 0x05, 0xFF, 0xFF,
+		0xFF, 0xFF, 0xFF, 0xFF,
+	}
+	if len(interiorData) != interiorRecordSize {
+		t.Fatalf("fixture must be %d bytes, got %d", interiorRecordSize, len(interiorData))
+	}
 	pkt := &mhfpacket.MsgMhfUpdateInterior{
 		AckHandle:    10,
 		InteriorData: interiorData,
