@@ -1,6 +1,7 @@
 package channelserver
 
 import (
+	"encoding/binary"
 	"erupe-ce/common/byteframe"
 	"erupe-ce/common/mhfitem"
 	ps "erupe-ce/common/pascalstring"
@@ -15,13 +16,31 @@ import (
 
 func handleMsgMhfUpdateInterior(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfUpdateInterior)
-	if len(pkt.InteriorData) > 64 {
-		s.logger.Warn("Interior payload too large", zap.Int("len", len(pkt.InteriorData)))
+
+	// This record is the only server-side copy of the applied-remodel bitfield
+	// (the house theme), so a partial write loses the theme on the next
+	// LoadHouse. Persist it only when it is exactly the record the client's
+	// parser round-trips (see interiorRecordSize); anything else is a bug
+	// upstream and must not overwrite good data.
+	if len(pkt.InteriorData) != interiorRecordSize {
+		s.logger.Warn("Refusing to store malformed interior record",
+			zap.Int("len", len(pkt.InteriorData)),
+			zap.Int("want", interiorRecordSize),
+			zap.Uint32("charID", s.charID),
+		)
 		doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
 		return
 	}
+
 	if err := s.server.houseRepo.UpdateInterior(s.charID, pkt.InteriorData); err != nil {
-		s.logger.Error("Failed to update house furniture", zap.Error(err))
+		s.logger.Error("Failed to update house interior", zap.Error(err), zap.Uint32("charID", s.charID))
+	} else {
+		// The remodel bitfield is the leading u32 of the record; log it so a
+		// theme that fails to persist is diagnosable without a packet capture.
+		s.logger.Info("Stored house interior",
+			zap.Uint32("charID", s.charID),
+			zap.Uint32("remodels", binary.BigEndian.Uint32(pkt.InteriorData[:4])),
+		)
 	}
 	doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
 }
