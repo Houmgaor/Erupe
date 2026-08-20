@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Repository links in `README.md` (CI/release badges, clone URL, release downloads, Erupe Wiki) now point to `Houmgaor/Erupe`, the maintained repository since `Mezeporta/Erupe` was archived. The upstream wiki was mirrored to this fork first, since a wiki does not transfer with a fork.
+- The Mezeporta Square Discord links in `README.md`, `CONTRIBUTING.md`, and `SECURITY.md` now state that the community supports Erupe only up to 9.3.0-beta and does not endorse later changes; vulnerability reports for this fork are routed to Mogapedia's Discord.
+
 ### Fixed
 
 - Legacy API routes `/login`, `/register`, and `/character/{create,delete,export}` are now POST-only (matching their `/v2` equivalents), so bare `GET` probes from internet scanners get a 405 instead of reaching the handler and failing body decode. Those decode failures are also downgraded from `Error` (which attached a full stacktrace) to `Debug`, since a malformed request body is a client error, not a server fault — this was the sole source of the recurring `ERROR JSON decode error {"error": "EOF"}` log spam.
