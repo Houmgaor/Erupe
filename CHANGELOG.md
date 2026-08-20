@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [9.4.2] - 2026-08-20
+
 ### Changed
 
 - Default `LoginNotices` banner in `config.reference.json` now points players at `Houmgaor/Erupe` instead of the archived `Mezeporta/Erupe`. This string is shown in-game on login, so operators who copied the reference config were advertising a read-only repository.
