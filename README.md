@@ -1,9 +1,8 @@
 # Erupe
 
-[![Build and Test](https://github.com/Mezeporta/Erupe/actions/workflows/go.yml/badge.svg)](https://github.com/Mezeporta/Erupe/actions/workflows/go.yml)
-[![CodeQL](https://github.com/Mezeporta/Erupe/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/Mezeporta/Erupe/actions/workflows/github-code-scanning/codeql)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/Mezeporta/Erupe)](https://go.dev/)
-[![Latest Release](https://img.shields.io/github/v/release/Mezeporta/Erupe)](https://github.com/Mezeporta/Erupe/releases/latest)
+[![Build and Test](https://github.com/Houmgaor/Erupe/actions/workflows/go.yml/badge.svg)](https://github.com/Houmgaor/Erupe/actions/workflows/go.yml)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/Houmgaor/Erupe)](https://go.dev/)
+[![Latest Release](https://img.shields.io/github/v/release/Houmgaor/Erupe)](https://github.com/Houmgaor/Erupe/releases/latest)
 
 Erupe is a community-maintained server emulator for Monster Hunter Frontier written in Go. It is a complete reverse-engineered solution to self-host a Monster Hunter Frontier server, using no code from Capcom.
 
@@ -13,7 +12,7 @@ Pick one of two installation methods, then continue to [Quest & Scenario Files](
 
 ### Option A: Pre-compiled Binary
 
-1. Download the latest release for your platform from [GitHub Releases](https://github.com/Mezeporta/Erupe/releases/latest):
+1. Download the latest release for your platform from [GitHub Releases](https://github.com/Houmgaor/Erupe/releases/latest):
    - `erupe-ce` for Linux
    - `erupe.exe` for Windows
 
@@ -74,7 +73,7 @@ Requires [Go 1.25+](https://go.dev/dl/) and [PostgreSQL](https://www.postgresql.
 1. Clone and build:
 
    ```bash
-   git clone https://github.com/Mezeporta/Erupe.git
+   git clone https://github.com/Houmgaor/Erupe.git
    cd Erupe
    go mod download
    go build -o erupe-ce
@@ -98,7 +97,7 @@ These files contain quest definitions, scenario data, and Hunting Road (`rengoku
 
 ### Option A: Sync (recommended)
 
-Download `binsync` from [GitHub Releases](https://github.com/Mezeporta/Erupe/releases/latest) alongside the server binary, then point it at a manifest URL from whichever community you're getting data from — Erupe doesn't bundle or default to one:
+Download `binsync` from [GitHub Releases](https://github.com/Houmgaor/Erupe/releases/latest) alongside the server binary, then point it at a manifest URL from whichever community you're getting data from — Erupe doesn't bundle or default to one:
 
 ```bash
 ./binsync --manifest-url <manifest-url>              # e.g. https://data.mogapedia.fr/erupe/manifest.json for Mogapedia's
@@ -182,7 +181,7 @@ Erupe supports per-session language preferences for quest text, scenario text, a
 - **Per-player override**: players can switch their own session language in-game with `!lang <code>` (e.g. `!lang fr`).
 - **Localized quest/scenario text**: JSON quests and scenarios accept either a plain string or a `{ "en": "...", "jp": "...", "fr": "...", "zh": "..." }` map for any user-facing field (quest titles, descriptions, scenario strings, etc.). The server picks the string matching the session's language and falls back to the default language when a translation is missing. Compiled output is cached per `(questID, language)`.
 
-`config.example.json` is intentionally minimal — all other settings have sane defaults built into the server. For the full configuration reference (gameplay multipliers, debug options, Discord integration, in-game commands, entrance/channel definitions), see [config.reference.json](./config.reference.json) and the [Erupe Wiki](https://github.com/Mezeporta/Erupe/wiki).
+`config.example.json` is intentionally minimal — all other settings have sane defaults built into the server. For the full configuration reference (gameplay multipliers, debug options, Discord integration, in-game commands, entrance/channel definitions), see [config.reference.json](./config.reference.json) and the [Erupe Wiki](https://github.com/Houmgaor/Erupe/wiki).
 
 ## Save Transfers
 
@@ -377,9 +376,9 @@ Enable detailed logging in `config.json`:
 ## Resources
 
 - **Quest/Scenario Files**: sync with `./binsync` (see [Quest & Scenario Files](#quest--scenario-files)), or [download manually (catbox)](https://files.catbox.moe/xf0l7w.7z)
-- **Documentation**: [Erupe Wiki](https://github.com/Mezeporta/Erupe/wiki)
+- **Documentation**: [Erupe Wiki](https://github.com/Houmgaor/Erupe/wiki)
 - **Discord Communities**:
-  - [Mezeporta Square](https://discord.gg/DnwcpXM488)
+  - [Mezeporta Square](https://discord.gg/DnwcpXM488) — active community for Erupe up to 9.3.0-beta; they do not endorse changes after that release, including this fork's
   - [Mogapedia](https://discord.gg/f77VwBX5w7) (French Monster Hunter community, current Erupe maintainers)
   - [PewPewDojo](https://discord.gg/CFnzbhQ)
 - **Community Tools**:

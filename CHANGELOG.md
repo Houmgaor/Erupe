@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `config.ResolveBinPath`/`Config.ResolvedBinPath()`: the quest/scenario/road data directory is now self-documenting (`game-data/` by default) instead of `bin/`, which predates JSON support and no longer describes what's stored there. An existing populated `bin/` directory is detected and kept automatically — no config.json changes needed on upgrade.
 - `handleMsgMhfGetUdGuildMapInfo`/`handleMsgMhfGenerateUdGuildMap` (guild interception map generation and retrieval for Diva Defense) — both were unconditional-fail stubs. Adds the procedural map generator and repository layer (`GuildRepo.GetInterceptionMaps`/`SaveInterceptionMaps`, backed by the `guilds.interception_maps` column provisioned by migration `0017_diva.sql`) on top of the packet layer authored by wish on the community `feature/diva` branch — preserved as tag `feature-diva-tip` / branch `archive/feature-diva`. Diva Defense design and contributions by wish, stratic-dev, Samboge, Re-Nest, and Houmgaor.
 
+### Changed
+
+- Repository links in `README.md` (CI/release badges, clone URL, release downloads, Erupe Wiki) now point to `Houmgaor/Erupe`, the maintained repository since `Mezeporta/Erupe` was archived. The upstream wiki was mirrored to this fork first, since a wiki does not transfer with a fork.
+- The Mezeporta Square Discord links in `README.md`, `CONTRIBUTING.md`, and `SECURITY.md` now state that the community supports Erupe only up to 9.3.0-beta and does not endorse later changes; vulnerability reports for this fork are routed to Mogapedia's Discord.
+
 ### Fixed
 
 - The house theme (the applied-remodel bitfield) can no longer be silently dropped on save (`handleMsgMhfUpdateInterior`, `HouseRepository.UpdateInterior`). `house_furniture` holds the only server-side copy of that bitfield — it is the leading u32 of the 20-byte interior record, which `lbb_remodel_check` tests as `field & (1 << (n-1))` — so any partial write loses the theme on the next `LoadHouse`. The handler now stores the record only when it is exactly `interiorRecordSize`, instead of accepting anything up to 64 bytes, and the repository reports the `UPDATE` matching no row rather than returning success. A successful store is logged with the decoded bitfield, so a theme that fails to persist is diagnosable without a packet capture. Record layout confirmed against the symbolicated Wii U build: `snj_db_get_housedata` expects `snj_db_analyze_interior() + 0xDB` = 239 bytes for a house visit, split 200 (tier+data) / 19 / 20 (interior), matching Destination=3 byte for byte.
@@ -24,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- CodeQL badge from `README.md`. Code scanning is not configured on this repository and the upstream configuration was GitHub default setup, which does not transfer with a fork, so the badge could only ever render "no status".
 - `stable/v9.2.x` branch and its `SECURITY.md` supported-version entry — the branch had been untouched since 2026-02-08 and 9.2.x is well past the current 9.4.x release line.
 
 ## [9.4.1] - 2026-07-15
