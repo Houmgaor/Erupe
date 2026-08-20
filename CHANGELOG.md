@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Default `LoginNotices` banner in `config.reference.json` now points players at `Houmgaor/Erupe` instead of the archived `Mezeporta/Erupe`. This string is shown in-game on login, so operators who copied the reference config were advertising a read-only repository.
 - Repository links in `README.md` (CI/release badges, clone URL, release downloads, Erupe Wiki) now point to `Houmgaor/Erupe`, the maintained repository since `Mezeporta/Erupe` was archived. The upstream wiki was mirrored to this fork first, since a wiki does not transfer with a fork.
 - The Mezeporta Square Discord links in `README.md`, `CONTRIBUTING.md`, and `SECURITY.md` now state that the community supports Erupe only up to 9.3.0-beta and does not endorse later changes; vulnerability reports for this fork are routed to Mogapedia's Discord.
 
