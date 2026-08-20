@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- CodeQL badge from `README.md`. Code scanning is not configured on this repository and the upstream configuration was GitHub default setup, which does not transfer with a fork, so the badge could only ever render "no status".
 - `stable/v9.2.x` branch and its `SECURITY.md` supported-version entry — the branch had been untouched since 2026-02-08 and 9.2.x is well past the current 9.4.x release line.
 
 ## [9.4.1] - 2026-07-15

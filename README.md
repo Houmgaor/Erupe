@@ -1,7 +1,6 @@
 # Erupe
 
 [![Build and Test](https://github.com/Houmgaor/Erupe/actions/workflows/go.yml/badge.svg)](https://github.com/Houmgaor/Erupe/actions/workflows/go.yml)
-[![CodeQL](https://github.com/Houmgaor/Erupe/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/Houmgaor/Erupe/actions/workflows/github-code-scanning/codeql)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/Houmgaor/Erupe)](https://go.dev/)
 [![Latest Release](https://img.shields.io/github/v/release/Houmgaor/Erupe)](https://github.com/Houmgaor/Erupe/releases/latest)
 
