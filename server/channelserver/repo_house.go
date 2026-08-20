@@ -19,10 +19,27 @@ func NewHouseRepository(db *sqlx.DB) *HouseRepository {
 
 // user_binary house columns
 
-// UpdateInterior saves the house furniture layout.
+// UpdateInterior saves the house interior record (remodel bitfield + furniture
+// slots).
+//
+// The UPDATE matches no row when the character has no user_binary row yet, which
+// would otherwise report success while silently discarding the record -- and
+// house_furniture is the only place the applied-remodel bitfield (the house
+// theme) is stored, so a lost write means the theme is gone on next load.
 func (r *HouseRepository) UpdateInterior(charID uint32, data []byte) error {
-	_, err := r.db.Exec(`UPDATE user_binary SET house_furniture=$1 WHERE id=$2`, data, charID)
-	return err
+	res, err := r.db.Exec(`UPDATE user_binary SET house_furniture=$1 WHERE id=$2`, data, charID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		// Driver does not report affected rows; the UPDATE itself succeeded.
+		return nil
+	}
+	if n == 0 {
+		return fmt.Errorf("update interior: no user_binary row for character %d", charID)
+	}
+	return nil
 }
 
 const houseQuery = `SELECT c.id, hr, gr, name, COALESCE(ub.house_state, 2) as house_state, COALESCE(ub.house_password, '') as house_password
