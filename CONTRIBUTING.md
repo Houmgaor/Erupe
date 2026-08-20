@@ -193,7 +193,7 @@ For seed/demo data (shops, events, gacha), add files to `server/migrations/seed/
 ### Questions and Discussion
 
 - **[Mogapedia's Discord](https://discord.gg/f77VwBX5w7)**: Active development discussions
-- **[Mezeporta Square Discord](https://discord.gg/DnwcpXM488)**: Community support
+- **[Mezeporta Square Discord](https://discord.gg/DnwcpXM488)**: Community support for Erupe up to 9.3.0-beta. They do not endorse changes after that release, so please raise questions about this fork's later features in Mogapedia's Discord instead
 - **GitHub Issues**: For bug reports and feature requests
 
 ### Reporting Bugs
