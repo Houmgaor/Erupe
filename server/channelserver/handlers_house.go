@@ -1,6 +1,7 @@
 package channelserver
 
 import (
+	"encoding/binary"
 	"erupe-ce/common/byteframe"
 	"erupe-ce/common/mhfitem"
 	ps "erupe-ce/common/pascalstring"
@@ -15,13 +16,31 @@ import (
 
 func handleMsgMhfUpdateInterior(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfUpdateInterior)
-	if len(pkt.InteriorData) > 64 {
-		s.logger.Warn("Interior payload too large", zap.Int("len", len(pkt.InteriorData)))
+
+	// This record is the only server-side copy of the applied-remodel bitfield
+	// (the house theme), so a partial write loses the theme on the next
+	// LoadHouse. Persist it only when it is exactly the record the client's
+	// parser round-trips (see interiorRecordSize); anything else is a bug
+	// upstream and must not overwrite good data.
+	if len(pkt.InteriorData) != interiorRecordSize {
+		s.logger.Warn("Refusing to store malformed interior record",
+			zap.Int("len", len(pkt.InteriorData)),
+			zap.Int("want", interiorRecordSize),
+			zap.Uint32("charID", s.charID),
+		)
 		doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
 		return
 	}
+
 	if err := s.server.houseRepo.UpdateInterior(s.charID, pkt.InteriorData); err != nil {
-		s.logger.Error("Failed to update house furniture", zap.Error(err))
+		s.logger.Error("Failed to update house interior", zap.Error(err), zap.Uint32("charID", s.charID))
+	} else {
+		// The remodel bitfield is the leading u32 of the record; log it so a
+		// theme that fails to persist is diagnosable without a packet capture.
+		s.logger.Info("Stored house interior",
+			zap.Uint32("charID", s.charID),
+			zap.Uint32("remodels", binary.BigEndian.Uint32(pkt.InteriorData[:4])),
+		)
 	}
 	doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
 }
@@ -116,6 +135,60 @@ func handleMsgMhfUpdateHouse(s *Session, p mhfpacket.MHFPacket) {
 	doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
 }
 
+// interiorRecordSize is the exact size of the my-house interior record on the
+// wire, in both directions: MSG_MHF_UPDATE_INTERIOR's payload is 20 bytes
+// (see MsgMhfUpdateInterior.Parse) and the client's own parser for the
+// MSG_MHF_LOAD_HOUSE Destination=9 response consumes and returns 0x14.
+const interiorRecordSize = 20
+
+// interiorEmptySlot is the "nothing installed in this slot" sentinel for the
+// interior record's six furniture slots.
+//
+// Recovered from the Wii U build (`MHF G Z2 v2064`, which ships real Capcom
+// debug symbols -- see ../../../tools/symbol-port for how that binary is used
+// as ground truth):
+//
+//   - `snj_db_analyze_interior(SNJ_MYHOUSE_INTERIOR*, const char*)` reads the
+//     record as one u32 followed by eight u16s (the last two are read and
+//     discarded) and returns 0x14, which is where interiorRecordSize above
+//     comes from.
+//   - The u32 is a bitfield of applied remodels, not an id:
+//     `lbb_remodel_check` tests it as `field & (1 << (n-1))`, so zero simply
+//     means "no remodels applied" and is a valid value for a new house.
+//   - `snj_db_set_houseinterior`, the client's *send* path, initialises its
+//     six u16 locals to 0xFFFF before filling in anything the caller supplied
+//     -- i.e. 0xFFFF is the client's own encoding for an unused slot.
+//   - `Lb_load_interior` reads each slot as a *signed* short and clamps it to
+//     0 only when it is >= the furniture table's entry count, so 0xFFFF (-1)
+//     is deliberately passed through unclamped, and `lbb_remodel_init` stores
+//     the same -1 sentinel in its own work struct.
+const interiorEmptySlot = 0xFFFF
+
+// defaultHouseInterior builds the interior record for a character who has
+// never decorated: no remodels applied, every furniture slot empty.
+//
+// A never-decorated character has house_furniture=NULL, because the column is
+// only ever written by MSG_MHF_UPDATE_INTERIOR (handleMsgMhfUpdateInterior),
+// which the client only sends *from inside the house*. Erupe used to answer
+// Destination=9 with 20 zero bytes, which the ZZ client accepts and then
+// crashes on ~1s later (issue #192): a zero slot is furniture id 0, a real
+// table index, not an empty slot. bc52649f replaced that with a failed ACK to
+// stop the crash, which fixed the crash but left the house unreachable -- and
+// with the house unreachable there was no way to ever send an UpdateInterior,
+// so house_furniture could never become non-NULL. This record breaks that
+// deadlock by sending what the client itself would send for an empty house.
+func defaultHouseInterior() []byte {
+	bf := byteframe.NewByteFrame()
+	bf.WriteUint32(0) // remodel bitfield: nothing applied
+	// Six furniture slots, plus the two trailing u16s the client's parser
+	// reads and discards -- same sentinel, so no field is ever a valid
+	// furniture index by accident.
+	for i := 0; i < 8; i++ {
+		bf.WriteUint16(interiorEmptySlot)
+	}
+	return bf.Data()
+}
+
 func handleMsgMhfLoadHouse(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfLoadHouse)
 	bf := byteframe.NewByteFrame()
@@ -179,15 +252,8 @@ func handleMsgMhfLoadHouse(s *Session, p mhfpacket.MHFPacket) {
 		doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
 		return
 	}
-	if pkt.Destination == 9 && houseFurniture == nil {
-		// The ZZ client crashes on a 20-zero-byte placeholder here (the real
-		// empty-state encoding hasn't been reverse-engineered yet), so fail
-		// the request cleanly instead of sending a payload it can't parse.
-		doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
-		return
-	}
-	if houseFurniture == nil {
-		houseFurniture = make([]byte, 20)
+	if len(houseFurniture) == 0 {
+		houseFurniture = defaultHouseInterior()
 	}
 
 	switch pkt.Destination {
