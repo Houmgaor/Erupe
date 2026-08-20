@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `config.ResolveBinPath`/`Config.ResolvedBinPath()`: the quest/scenario/road data directory is now self-documenting (`game-data/` by default) instead of `bin/`, which predates JSON support and no longer describes what's stored there. An existing populated `bin/` directory is detected and kept automatically — no config.json changes needed on upgrade.
 - `handleMsgMhfGetUdGuildMapInfo`/`handleMsgMhfGenerateUdGuildMap` (guild interception map generation and retrieval for Diva Defense) — both were unconditional-fail stubs. Adds the procedural map generator and repository layer (`GuildRepo.GetInterceptionMaps`/`SaveInterceptionMaps`, backed by the `guilds.interception_maps` column provisioned by migration `0017_diva.sql`) on top of the packet layer authored by wish on the community `feature/diva` branch — preserved as tag `feature-diva-tip` / branch `archive/feature-diva`. Diva Defense design and contributions by wish, stratic-dev, Samboge, Re-Nest, and Houmgaor.
 
+### Fixed
+
+- `handleMsgMhfSetUdTacticsFollower` had an empty body that sent no ACK at all (guaranteed client softlock for that packet), and its packet's `Parse()` unconditionally returned an error so the handler was never even reached. Implemented `Parse()` (AckHandle + 4 unknown uint16 fields) and a simple-succeed ACK.
+
+## [9.4.2] - 2026-08-20
+
 ### Changed
 
 - Default `LoginNotices` banner in `config.reference.json` now points players at `Houmgaor/Erupe` instead of the archived `Mezeporta/Erupe`. This string is shown in-game on login, so operators who copied the reference config were advertising a read-only repository.
@@ -26,7 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Entering your own house is possible again for a character who has never decorated one (`handleMsgMhfLoadHouse`, Destination=9). `house_furniture` is NULL until the client sends `MSG_MHF_UPDATE_INTERIOR`, which it only does from *inside* the house, so the failed ACK added in bc52649f to stop the #192 crash also made the house permanently unreachable — the client showed 「データの取得に失敗しました」 ("Failed to retrieve data") and stayed put. Erupe now answers with the empty-interior record the client itself uses (remodel bitfield 0, then eight `0xFFFF` slots): 0 is a valid furniture index, which is why the old 20-zero-byte placeholder crashed, whereas `0xFFFF` is the client's own "empty slot" sentinel. Layout read off the symbolicated Wii U build (`snj_db_analyze_interior`, `snj_db_set_houseinterior`, `Lb_load_interior`); confirmed live against the real ZZ client, which now loads stage `sl2Ms173p0a0u211111` and stays connected.
 - Legacy API routes `/login`, `/register`, and `/character/{create,delete,export}` are now POST-only (matching their `/v2` equivalents), so bare `GET` probes from internet scanners get a 405 instead of reaching the handler and failing body decode. Those decode failures are also downgraded from `Error` (which attached a full stacktrace) to `Debug`, since a malformed request body is a client error, not a server fault — this was the sole source of the recurring `ERROR JSON decode error {"error": "EOF"}` log spam.
 - Channel-server recv-loop disconnects (`sys_session.go`) no longer log at `WARN` for routine cases: pre-auth probes (`charID == 0`, e.g. port scanners on the channel port) drop to `Debug` and authenticated-player network resets to `Info`, keeping genuine errors visible.
-- `handleMsgMhfSetUdTacticsFollower` had an empty body that sent no ACK at all (guaranteed client softlock for that packet), and its packet's `Parse()` unconditionally returned an error so the handler was never even reached. Implemented `Parse()` (AckHandle + 4 unknown uint16 fields) and a simple-succeed ACK.
 
 ### Removed
 
