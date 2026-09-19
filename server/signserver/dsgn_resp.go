@@ -130,7 +130,7 @@ func (s *Session) makeSignResponse(uid uint32) []byte {
 		bf.WriteBool(true)
 		bf.WriteUint8(0)
 		bf.WriteUint8(0)
-		ps.Uint16(bf, strings.Join(s.server.erupeConfig.LoginNotices[:], "<PAGE>"), true)
+		ps.Uint16(bf, strings.Join(s.server.loginNotices(), "<PAGE>"), true)
 	}
 
 	bf.WriteUint32(s.server.getLastCID(uid))

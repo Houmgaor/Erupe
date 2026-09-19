@@ -54,6 +54,26 @@ func (ws *wizardServer) handlePresets(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"presets": availablePresets()})
 }
 
+// syncQuestsRequest is the JSON body for POST /api/setup/sync-quests.
+type syncQuestsRequest struct {
+	ManifestURL string `json:"manifestURL"`
+}
+
+func (ws *wizardServer) handleSyncQuests(w http.ResponseWriter, r *http.Request) {
+	var req syncQuestsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if req.ManifestURL == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "manifestURL is required"})
+		return
+	}
+
+	status := syncBinData("", req.ManifestURL)
+	writeJSON(w, http.StatusOK, status)
+}
+
 // testDBRequest is the JSON body for POST /api/setup/test-db.
 type testDBRequest struct {
 	Host     string `json:"host"`

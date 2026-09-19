@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -684,6 +686,72 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	if cfg.RealClientMode != ZZ {
 		t.Error("Default RealClientMode mismatch")
+	}
+}
+
+func TestResolveBinPath_ExplicitOverrideAlwaysWins(t *testing.T) {
+	if got := ResolveBinPath("custom-dir"); got != "custom-dir" {
+		t.Errorf("ResolveBinPath(%q) = %q, want %q", "custom-dir", got, "custom-dir")
+	}
+}
+
+func TestResolveBinPath_FreshInstallUsesDefaultName(t *testing.T) {
+	dir := t.TempDir()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := ResolveBinPath("bin"); got != DefaultBinPath {
+		t.Errorf("ResolveBinPath(\"bin\") on a fresh install = %q, want %q", got, DefaultBinPath)
+	}
+}
+
+func TestResolveBinPath_ExistingLegacyBinDirIsKept(t *testing.T) {
+	dir := t.TempDir()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Join("bin", "quests"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("bin", "quests", "00001d0.bin"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := ResolveBinPath("bin"); got != "bin" {
+		t.Errorf("ResolveBinPath(\"bin\") with populated legacy dir = %q, want %q", got, "bin")
+	}
+}
+
+func TestResolveBinPath_EmptyLegacyBinDirIsIgnored(t *testing.T) {
+	dir := t.TempDir()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	// An empty (or absent-quests) bin/ dir shouldn't count as "has data".
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := ResolveBinPath("bin"); got != DefaultBinPath {
+		t.Errorf("ResolveBinPath(\"bin\") with empty legacy dir = %q, want %q", got, DefaultBinPath)
 	}
 }
 

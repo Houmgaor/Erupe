@@ -26,10 +26,12 @@ jobs:
             goarch: amd64
             os_name: Linux-amd64
             binary: erupe-ce
+            binsync: binsync
           - goos: windows
             goarch: amd64
             os_name: Windows-amd64
             binary: erupe-ce.exe
+            binsync: binsync.exe
 
     steps:
     - uses: actions/checkout@v6
@@ -45,10 +47,14 @@ jobs:
     - name: Build
       run: env GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -v -o ${{ matrix.binary }}
 
+    - name: Build binsync
+      run: env GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -v -o ${{ matrix.binsync }} ./cmd/binsync/
+
     - name: Prepare release archive
       run: |
         mkdir -p staging
         cp ${{ matrix.binary }} staging/
+        cp ${{ matrix.binsync }} staging/
         cp config.example.json staging/
         cp config.reference.json staging/
         # Schema is now embedded in the binary via server/migrations/

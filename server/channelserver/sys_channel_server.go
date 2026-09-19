@@ -202,7 +202,7 @@ func NewServer(config *Config) *Server {
 	// MezFes
 	s.stages.Store("sl1Ns462p0a0u0", NewStage("sl1Ns462p0a0u0"))
 
-	s.rengokuBin = loadRengokuBinary(config.ErupeConfig.BinPath, s.logger)
+	s.rengokuBin = loadRengokuBinary(config.ErupeConfig.ResolvedBinPath(), s.logger)
 
 	s.i18n = getLangStrings(s)
 

@@ -1,13 +1,18 @@
 package setup
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"erupe-ce/server/binsync"
 
 	"go.uber.org/zap"
 )
@@ -482,5 +487,109 @@ func TestWriteConfig_Permissions(t *testing.T) {
 	// File should be 0600 (owner read/write only)
 	if perm := info.Mode().Perm(); perm != 0600 {
 		t.Errorf("config.json permissions = %o, want 0600", perm)
+	}
+}
+
+func TestHandleSyncQuests_InvalidJSON(t *testing.T) {
+	ws := &wizardServer{
+		logger: zap.NewNop(),
+		done:   make(chan struct{}),
+	}
+	req := httptest.NewRequest("POST", "/api/setup/sync-quests", strings.NewReader("not json"))
+	w := httptest.NewRecorder()
+	ws.handleSyncQuests(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if resp["error"] != "invalid JSON" {
+		t.Errorf("error = %q, want %q", resp["error"], "invalid JSON")
+	}
+}
+
+func TestHandleSyncQuests_MissingManifestURL(t *testing.T) {
+	ws := &wizardServer{
+		logger: zap.NewNop(),
+		done:   make(chan struct{}),
+	}
+	req := httptest.NewRequest("POST", "/api/setup/sync-quests", strings.NewReader(`{"manifestURL":""}`))
+	w := httptest.NewRecorder()
+	ws.handleSyncQuests(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if resp["error"] != "manifestURL is required" {
+		t.Errorf("error = %q, want %q", resp["error"], "manifestURL is required")
+	}
+}
+
+func TestHandleSyncQuests_Success(t *testing.T) {
+	binDir := t.TempDir()
+	content := []byte("{}") // minimal valid rengoku_data.json
+	sum := sha256.Sum256(content)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/rengoku_data.json", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(content)
+	})
+	mux.HandleFunc("/manifest.json", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(binsync.Manifest{
+			Version: binsync.ManifestVersion,
+			Files: map[string]binsync.FileEntry{
+				"rengoku_data.json": {SHA256: hex.EncodeToString(sum[:]), Size: int64(len(content))},
+			},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// syncBinData("", ...) always targets "bin" relative to the working
+	// directory (mirroring checkQuestFiles), so run from a temp dir.
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(oldWD) }()
+	if err := os.Chdir(binDir); err != nil {
+		t.Fatal(err)
+	}
+
+	ws := &wizardServer{
+		logger: zap.NewNop(),
+		done:   make(chan struct{}),
+	}
+	body := fmt.Sprintf(`{"manifestURL":%q}`, srv.URL+"/manifest.json")
+	req := httptest.NewRequest("POST", "/api/setup/sync-quests", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	ws.handleSyncQuests(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp SyncStatus
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("Success = false, log: %v", resp.Log)
+	}
+
+	// A fresh directory has no legacy bin/, so this resolves to the new
+	// self-documenting cfg.DefaultBinPath ("game-data"), not "bin".
+	got, err := os.ReadFile(filepath.Join(binDir, "game-data", "rengoku_data.json"))
+	if err != nil {
+		t.Fatalf("installed file: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Errorf("installed content = %q, want %q", got, content)
 	}
 }

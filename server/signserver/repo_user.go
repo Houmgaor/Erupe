@@ -112,3 +112,19 @@ func (r *SignUserRepository) GetPSNIDForUser(uid uint32) (string, error) {
 	err := r.db.QueryRow("SELECT psn_id FROM users WHERE id = $1", uid).Scan(&psnID)
 	return psnID, err
 }
+
+// SignNoticeRepository is the PostgreSQL implementation of SignNoticeRepo.
+type SignNoticeRepository struct {
+	db *sqlx.DB
+}
+
+func NewSignNoticeRepository(db *sqlx.DB) *SignNoticeRepository {
+	return &SignNoticeRepository{db: db}
+}
+
+func (r *SignNoticeRepository) ActiveNotices() ([]string, error) {
+	var bodies []string
+	err := r.db.Select(&bodies,
+		`SELECT body FROM notices WHERE expires_at IS NULL OR expires_at > now() ORDER BY id`)
+	return bodies, err
+}

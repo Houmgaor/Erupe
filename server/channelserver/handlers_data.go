@@ -206,8 +206,9 @@ func dumpSaveData(s *Session, data []byte, suffix string) {
 
 func handleMsgMhfLoaddata(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfLoaddata)
-	if _, err := os.Stat(filepath.Join(s.server.erupeConfig.BinPath, "save_override.bin")); err == nil {
-		data, readErr := os.ReadFile(filepath.Join(s.server.erupeConfig.BinPath, "save_override.bin"))
+	binPath := s.server.erupeConfig.ResolvedBinPath()
+	if _, err := os.Stat(filepath.Join(binPath, "save_override.bin")); err == nil {
+		data, readErr := os.ReadFile(filepath.Join(binPath, "save_override.bin"))
 		if readErr != nil {
 			s.logger.Error("Failed to read save_override.bin", zap.Error(readErr))
 		} else {

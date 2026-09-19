@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [9.5.0] - 2026-09-19
+
+### Added
+- Operator REST API under `/v2/admin` (same bearer token as players, plus `users.op`): account search/detail, op and rights changes, password reset, ban/unban, login notices, gift-box distributions with items, and event cycles (start/restart/stop Festa, Diva, VS, MezFes). Every mutation is logged with the operator's ID. Notices live in a new `notices` table (migration `0027`) and are appended to the static `LoginNotices` at sign-in and in the login payload, so an announcement no longer needs a config edit and a restart. Documented in `docs/openapi.yaml` and the wiki. First step of #16.
+- Erupe can now host the game-file tree clients sync from (`API.PatchTree: {Enabled, Root}`, package `server/patchtree`): serves `/mhf_file.php?key|chk` and `/mhfdat/…` from the API port with the exact shapes `mhl.dll` and mhf-outpost issue, regenerates the CRC32 manifest on startup when any file is newer than it, and advertises `http://<Host>:<API.Port>` as `API.PatchServer` unless one is set. `cmd/patchtree` generates the same manifest for trees hosted elsewhere.
+- `docs/patch-server/`: manifest generator (`genMhfKey.py`) and nginx example for hosting the game-file tree; README "Client Setup" now points to the wiki page *Client Distribution* (mhf-outpost vs original launcher, `API.PatchServer`, `PatchServerManifest`/`PatchServerFile`).
+- Remote quest/scenario/road data sync (`server/binsync`, `cmd/binsync`, setup wizard "Sync Now"): downloads JSON data from a self-hosted HTTPS manifest, verifying each file's SHA-256 and its content via Erupe's own `CompileQuestJSON`/`CompileScenarioJSON`/`BuildRengokuBinary` before installing it, so a bad or corrupted fetch never overwrites known-good local data. Replaces the old single static catbox.moe archive link as the primary distribution path (kept as a manual fallback). See `docs/binsync-format.md`.
+- `cmd/questconv`: producer-side tooling for whoever curates the remote data set — bulk-converts retail `.bin` quest/scenario files to `.json` via the existing `ParseQuestBinary`/`ParseScenarioBinary`, with an optional `--verify` round-trip check, and generates the `manifest.json` `binsync` consumes.
+- `config.ResolveBinPath`/`Config.ResolvedBinPath()`: the quest/scenario/road data directory is now self-documenting (`game-data/` by default) instead of `bin/`, which predates JSON support and no longer describes what's stored there. An existing populated `bin/` directory is detected and kept automatically — no config.json changes needed on upgrade.
+- `handleMsgMhfGetUdGuildMapInfo`/`handleMsgMhfGenerateUdGuildMap` (guild interception map generation and retrieval for Diva Defense) — both were unconditional-fail stubs. Adds the procedural map generator and repository layer (`GuildRepo.GetInterceptionMaps`/`SaveInterceptionMaps`, backed by the `guilds.interception_maps` column provisioned by migration `0017_diva.sql`) on top of the packet layer authored by wish on the community `feature/diva` branch — preserved as tag `feature-diva-tip` / branch `archive/feature-diva`. Diva Defense design and contributions by wish, stratic-dev, Samboge, Re-Nest, and Houmgaor.
+
+### Fixed
+
+- Reverted `0024_fix_road_shop_item_9958.sql` (new migration `0026_revert_road_shop_item_9958.sql`, plus the matching seed row). Item 9958 is スペリアチケット (Superior Ticket), not a bulk consumable: its nonzero `road_fatalis` is the Fatalis-kill gate the client renders, not a stray value, so rewriting the row to `cost=1/quantity=999/road_fatalis=0` turned a gated single ticket into an ungated 999x bulk purchase. The revert is guarded on the row still matching what 0024 wrote, so a deployment that has since retuned the item keeps its own values.
+- `ShopRepository.GetShopItems` now returns rows `ORDER BY cost ASC, id ASC` instead of an unordered scan. Because `handleMsgMhfEnumerateShop` truncates oversized item shops at `maxItemShopRows`, PostgreSQL heap order was deciding which rows reached the client — so a row could silently disappear from a shop after any `UPDATE` or `VACUUM` moved it past the cut. Sorting by cost keeps cheap consumables in the surviving prefix and makes the result stable across restarts.
+- `cmd/protbot`: `MSG_MHF_ENUMERATE_QUEST` opcode was `0x009F`, one below its real value `0x00A0` (160th entry of `network.PacketID`), so the quest-list scenario sent the wrong packet.
+- `handleMsgMhfSetUdTacticsFollower` had an empty body that sent no ACK at all (guaranteed client softlock for that packet), and its packet's `Parse()` unconditionally returned an error so the handler was never even reached. Implemented `Parse()` (AckHandle + 4 unknown uint16 fields) and a simple-succeed ACK.
+
 ## [9.4.2] - 2026-08-20
 
 ### Changed

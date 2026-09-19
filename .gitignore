@@ -8,7 +8,15 @@ vendor/
 /docker/db-data
 /docker/savedata
 /docker/bin
+/docker/game-data
 /docker/config.json
+# Quest/scenario/road data (bin/ and its game-data/ successor) is Capcom-
+# derived and must never enter this repo's git history — *.bin above only
+# ever covered the legacy binary files; JSON files need the whole directory
+# ignored. The existing .gitkeep placeholders under bin/ stay tracked
+# regardless (gitignore never untracks already-tracked files).
+/bin/
+/game-data/
 screenshots/*
 
 # We don't need built files

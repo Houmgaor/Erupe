@@ -1,12 +1,16 @@
 package setup
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+
+	cfg "erupe-ce/config"
+	"erupe-ce/server/binsync"
 
 	"github.com/lib/pq"
 )
@@ -146,19 +150,24 @@ func presetConfigs() map[string]map[string]interface{} {
 
 // QuestStatus holds the result of a quest files check.
 type QuestStatus struct {
-	QuestsFound bool `json:"questsFound"`
-	QuestCount  int  `json:"questCount"`
+	QuestsFound bool   `json:"questsFound"`
+	QuestCount  int    `json:"questCount"`
+	Dir         string `json:"dir"` // resolved directory that was checked, e.g. "game-data" or "bin"
 }
 
-// checkQuestFiles checks if quest files exist in the bin/quests/ directory.
+// checkQuestFiles checks if quest files exist in binPath/quests/. An empty
+// binPath resolves via cfg.ResolveBinPath: a populated legacy bin/ directory
+// is kept as-is, otherwise the new self-documenting cfg.DefaultBinPath is
+// used — so a brand new install is checked/reported under the right name
+// without requiring a config.json yet.
 func checkQuestFiles(binPath string) QuestStatus {
 	if binPath == "" {
-		binPath = "bin"
+		binPath = cfg.ResolveBinPath("bin")
 	}
 	questDir := filepath.Join(binPath, "quests")
 	entries, err := os.ReadDir(questDir)
 	if err != nil {
-		return QuestStatus{QuestsFound: false, QuestCount: 0}
+		return QuestStatus{QuestsFound: false, QuestCount: 0, Dir: binPath}
 	}
 	count := 0
 	for _, e := range entries {
@@ -166,7 +175,48 @@ func checkQuestFiles(binPath string) QuestStatus {
 			count++
 		}
 	}
-	return QuestStatus{QuestsFound: count > 0, QuestCount: count}
+	return QuestStatus{QuestsFound: count > 0, QuestCount: count, Dir: binPath}
+}
+
+// SyncStatus holds the result of a quest/scenario/road data sync.
+type SyncStatus struct {
+	Success bool     `json:"success"`
+	Log     []string `json:"log"`
+}
+
+// syncBinData downloads quest/scenario/road JSON data from manifestURL into
+// binPath via server/binsync, flattening the result into a flat log — the
+// same shape handleInitDB already uses for the DB-init step — so wizard.html
+// can render it with the exact same "spinner, then scrolling log" pattern.
+func syncBinData(binPath, manifestURL string) SyncStatus {
+	if binPath == "" {
+		binPath = cfg.ResolveBinPath("bin")
+	}
+
+	var log []string
+	logf := func(format string, args ...any) {
+		log = append(log, fmt.Sprintf(format, args...))
+	}
+
+	report, err := binsync.Sync(context.Background(), binsync.Options{
+		ManifestURL: manifestURL,
+		BinPath:     binPath,
+	}, logf)
+	if err != nil {
+		logf("ERROR: %s", err)
+		return SyncStatus{Success: false, Log: log}
+	}
+
+	logf("Done: %d fetched, %d already up to date, %d failed, %d orphaned file(s) left untouched",
+		len(report.Fetched), len(report.Skipped), len(report.Failed), len(report.Orphans))
+	if len(report.Failed) > 0 {
+		for _, f := range report.Failed {
+			logf("  FAILED %s: %s", f.Path, f.Err)
+		}
+		return SyncStatus{Success: false, Log: log}
+	}
+
+	return SyncStatus{Success: true, Log: log}
 }
 
 // PresetInfo describes a gameplay preset for the wizard UI.

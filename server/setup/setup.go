@@ -24,6 +24,7 @@ func Run(logger *zap.Logger, port int) error {
 	r.HandleFunc("/api/setup/test-db", ws.handleTestDB).Methods("POST")
 	r.HandleFunc("/api/setup/init-db", ws.handleInitDB).Methods("POST")
 	r.HandleFunc("/api/setup/check-quests", ws.handleCheckQuests).Methods("GET")
+	r.HandleFunc("/api/setup/sync-quests", ws.handleSyncQuests).Methods("POST")
 	r.HandleFunc("/api/setup/presets", ws.handlePresets).Methods("GET")
 	r.HandleFunc("/api/setup/finish", ws.handleFinish).Methods("POST")
 

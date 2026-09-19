@@ -17,9 +17,18 @@ func NewShopRepository(db *sqlx.DB) *ShopRepository {
 // GetShopItems returns shop items with per-character purchase counts.
 func (r *ShopRepository) GetShopItems(shopType uint8, shopID uint32, charID uint32) ([]ShopItem, error) {
 	var result []ShopItem
+	// The ordering is load-bearing, not cosmetic: handleMsgMhfEnumerateShop
+	// truncates oversized item shops (see maxItemShopRows), so an unordered
+	// scan let PostgreSQL heap order decide which rows reach the client --
+	// meaning a row could silently vanish from a shop after any UPDATE or
+	// VACUUM moved it past the cut. Sorting by cost keeps the cheap
+	// consumables players actually need in the surviving prefix and pushes
+	// the expensive bulk listings to the tail; id breaks ties so the result
+	// is stable across restarts.
 	err := r.db.Select(&result, `SELECT id, item_id, cost, quantity, min_hr, min_sr, min_gr, store_level, max_quantity,
        		COALESCE((SELECT bought FROM shop_items_bought WHERE shop_item_id=si.id AND character_id=$3), 0) as used_quantity,
        		road_floors, road_fatalis FROM shop_items si WHERE shop_type=$1 AND shop_id=$2
+       		ORDER BY cost ASC, id ASC
        		`, shopType, shopID, charID)
 	return result, err
 }
