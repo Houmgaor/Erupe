@@ -129,9 +129,26 @@ JSON quests and scenarios use UTF-8 text (converted to Shift-JIS on the wire), m
 
 ## Client Setup
 
-1. Obtain a Monster Hunter Frontier client (version G10 or later recommended)
-2. Point the client to your server by editing `host.txt` or using a launcher to redirect to your server's IP
-3. Launch `mhf.exe`, select your server, and create an account
+Erupe emulates the game servers only; getting players a client and pointing it
+at you is a separate job. There are two ways in:
+
+- **[mhf-outpost](https://github.com/Mogapedia/mhf-outpost)** (recommended) —
+  open-source launcher, ships no game data. Players enter your API address
+  (`http://<host>:8080`), sign in, and it syncs the game files from the patch
+  server you advertise in `API.PatchServer`.
+- **Original launcher** (`mhf.exe` + a community-patched `mhl.dll`) — needs a
+  launcher page and `serverslist.xml` over plain HTTP, and
+  `PatchServerManifest`/`PatchServerFile` for updates.
+
+Both sync from the same patch tree (`mhfdat/{exe,dat}` + CRC32 manifest).
+The full procedure — what to host, which config keys tie it together, how to
+verify it — is in the wiki:
+**[Client Distribution](https://github.com/Houmgaor/Erupe/wiki/Client-Distribution)**.
+Helper files (manifest generator, nginx example) are in
+[`docs/patch-server/`](docs/patch-server/).
+
+`ClientMode` must match the client build you distribute; see
+[Client Versions](https://github.com/Houmgaor/Erupe/wiki/Client-Versions).
 
 If you have an **installed** copy of Monster Hunter Frontier on an old hard drive, **please** get in contact so we can archive it!
 
