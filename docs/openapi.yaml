@@ -249,6 +249,61 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /mhf_file.php:
+    get:
+      summary: Game-file manifest or connectivity check (patch tree)
+      description: |
+        Served only when `API.PatchTree.Enabled` is set. Same shapes the original
+        launcher (`mhl.dll`) issues; `?key=<n>` returns the CRC32 manifest
+        (`CRC32,FILETIME_LO,FILETIME_HI,path,size,0` per line), `?chk=<n>` returns
+        the literal `[mhf Check Message:0]`. `<n>` is a cache-buster. Plain HTTP only.
+      operationId: getPatchManifest
+      tags: [patch-tree]
+      parameters:
+        - in: query
+          name: key
+          schema: { type: integer }
+          description: Request the manifest
+        - in: query
+          name: chk
+          schema: { type: integer }
+          description: Request the check message
+      responses:
+        "200":
+          description: Manifest (application/octet-stream) or check message (text/plain)
+        "404":
+          description: Neither `key` nor `chk` given, or patch tree disabled
+        "503":
+          description: Manifest not generated yet
+
+  /mhfdat/{kind}/{path}:
+    get:
+      summary: One game file from the patch tree
+      description: Served only when `API.PatchTree.Enabled` is set. Supports Range requests.
+      operationId: getPatchFile
+      tags: [patch-tree]
+      parameters:
+        - in: path
+          name: kind
+          required: true
+          schema: { type: string, enum: [exe, dat] }
+        - in: path
+          name: path
+          required: true
+          schema: { type: string }
+          description: Path under `mhfdat/<kind>/`, may contain slashes
+        - in: query
+          name: id
+          schema: { type: integer }
+          description: Cache-buster, ignored
+      responses:
+        "200":
+          description: File contents (application/octet-stream)
+        "206":
+          description: Partial content
+        "404":
+          description: Not a regular file under exe/ or dat/, or patch tree disabled
+
 components:
   securitySchemes:
     bearerAuth:

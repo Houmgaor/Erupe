@@ -141,11 +141,13 @@ at you is a separate job. There are two ways in:
   `PatchServerManifest`/`PatchServerFile` for updates.
 
 Both sync from the same patch tree (`mhfdat/{exe,dat}` + CRC32 manifest).
-The full procedure — what to host, which config keys tie it together, how to
+Erupe can host that tree itself — set `API.PatchTree.Enabled` and drop the
+files under `patch/mhfdat/`; the manifest is generated on startup — or you
+can serve it from any web server. The full procedure — what to host, which config keys tie it together, how to
 verify it — is in the wiki:
 **[Client Distribution](https://github.com/Houmgaor/Erupe/wiki/Client-Distribution)**.
-Helper files (manifest generator, nginx example) are in
-[`docs/patch-server/`](docs/patch-server/).
+Helper files for the web-server route (manifest generator, nginx example)
+are in [`docs/patch-server/`](docs/patch-server/).
 
 `ClientMode` must match the client build you distribute; see
 [Client Versions](https://github.com/Houmgaor/Erupe/wiki/Client-Versions).

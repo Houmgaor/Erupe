@@ -320,11 +320,21 @@ type Sign struct {
 type API struct {
 	Enabled     bool
 	Port        int
-	PatchServer string
+	PatchServer string // Origin of the game-file tree, advertised to mhf-outpost via /v2/login
+	PatchTree   PatchTree
 	Banners     []APISignBanner
 	Messages    []APISignMessage
 	Links       []APISignLink
 	LandingPage LandingPage
+}
+
+// PatchTree makes the API server host the game-file tree itself (see
+// server/patchtree), so a separate web server is not needed for clients to
+// sync files. When enabled and PatchServer is empty, PatchServer defaults to
+// http://<Host>:<API.Port>.
+type PatchTree struct {
+	Enabled bool   // Serve /mhf_file.php and /mhfdat/ from Root
+	Root    string // Directory holding key.txt and mhfdat/{exe,dat} (default "patch")
 }
 
 // LandingPage holds config for the browser-facing landing page at /.
@@ -500,6 +510,10 @@ func registerDefaults() {
 	// Discord
 	viper.SetDefault("Discord.RelayChannel.MaxMessageLength", 183)
 
+	// API.PatchTree — dot-notation for the same reason as BinSync below.
+	viper.SetDefault("API.PatchTree.Enabled", false)
+	viper.SetDefault("API.PatchTree.Root", "patch")
+
 	// BinSync — dot-notation so a user setting only BinSync.Enabled doesn't
 	// zero out ManifestURL (same reasoning as DebugOptions/GameplayOptions).
 	viper.SetDefault("BinSync.Enabled", false)
@@ -629,6 +643,13 @@ func LoadConfig() (*Config, error) {
 			return nil, fmt.Errorf("failed to detect host IP: %w", err)
 		}
 		c.Host = ip.To4().String()
+	}
+
+	// Hosting the game files ourselves: advertise them under this server's
+	// own address unless the operator set something else (e.g. a reverse
+	// proxy in front, or a separate patch server).
+	if c.API.PatchTree.Enabled && c.API.PatchServer == "" {
+		c.API.PatchServer = fmt.Sprintf("http://%s:%d", c.Host, c.API.Port)
 	}
 
 	for i := range versionStrings {
