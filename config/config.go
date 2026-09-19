@@ -2,9 +2,11 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -217,6 +219,8 @@ type GameplayOptions struct {
 	MaxFeatureWeapons              int       // Maximum number of Active Feature weapons to generate daily
 	MaximumNP                      int       // Maximum number of NP held by a player
 	MaximumRP                      uint16    // Maximum number of RP held by a player
+	RPAccrualNormalSeconds         int       // Seconds per RP without cafe course; must be positive
+	RPAccrualCafeSeconds           int       // Seconds per RP with cafe course; must be positive
 	MaximumFP                      uint32    // Maximum number of FP held by a player
 	TreasureHuntExpiry             uint32    // Seconds until a Clan Treasure Hunt will expire
 	TreasureHuntPartnyaCooldown    uint32    // Seconds until a Partnya can be assigned to another Clan Treasure Hunt
@@ -479,6 +483,8 @@ func registerDefaults() {
 	viper.SetDefault("GameplayOptions.MaxFeatureWeapons", 1)
 	viper.SetDefault("GameplayOptions.MaximumNP", 100000)
 	viper.SetDefault("GameplayOptions.MaximumRP", uint16(50000))
+	viper.SetDefault("GameplayOptions.RPAccrualNormalSeconds", 1800)
+	viper.SetDefault("GameplayOptions.RPAccrualCafeSeconds", 900)
 	viper.SetDefault("GameplayOptions.MaximumFP", uint32(120000))
 	viper.SetDefault("GameplayOptions.TreasureHuntExpiry", uint32(604800))
 	viper.SetDefault("GameplayOptions.BoostTimeDuration", 7200)
@@ -631,6 +637,13 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	// Validate these new keys before weak decoding can truncate fractional values
+	// or coerce strings/bools. Keep decoding of existing options unchanged.
+	for _, key := range []string{"GameplayOptions.RPAccrualNormalSeconds", "GameplayOptions.RPAccrualCafeSeconds"} {
+		if err := validateRPAccrualSeconds(key, viper.Get(key)); err != nil {
+			return nil, err
+		}
+	}
 	c := &Config{}
 	err = viper.Unmarshal(c)
 	if err != nil {
@@ -671,4 +684,24 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return c, nil
+}
+
+// Use a portable positive integer range, including on 32-bit server builds.
+func validateRPAccrualSeconds(key string, value interface{}) error {
+	v := reflect.ValueOf(value)
+	var n float64
+	switch v.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		n = float64(v.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		n = float64(v.Uint())
+	case reflect.Float32, reflect.Float64:
+		n = v.Float()
+	default:
+		return fmt.Errorf("%s must be an integer number of seconds between 1 and 2147483647", key)
+	}
+	if math.IsNaN(n) || math.IsInf(n, 0) || n < 1 || n > math.MaxInt32 || n != math.Trunc(n) {
+		return fmt.Errorf("%s must be an integer number of seconds between 1 and 2147483647", key)
+	}
+	return nil
 }
