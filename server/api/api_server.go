@@ -34,6 +34,7 @@ type APIServer struct {
 	charRepo       APICharacterRepo
 	sessionRepo    APISessionRepo
 	eventRepo      APIEventRepo
+	adminRepo      APIAdminRepo
 	httpServer     *http.Server
 	startTime      time.Time
 	isShuttingDown bool
@@ -52,6 +53,7 @@ func NewAPIServer(config *Config) *APIServer {
 		s.charRepo = NewAPICharacterRepository(config.DB)
 		s.sessionRepo = NewAPISessionRepository(config.DB)
 		s.eventRepo = NewAPIEventRepository(config.DB)
+		s.adminRepo = NewAPIAdminRepository(config.DB)
 	}
 	return s
 }
@@ -108,6 +110,9 @@ func (s *APIServer) Start() error {
 	v2Auth.HandleFunc("/characters/{id}", s.DeleteCharacter).Methods("DELETE")
 	v2Auth.HandleFunc("/characters/{id}/export", s.ExportSave).Methods("GET")
 	v2Auth.HandleFunc("/characters/{id}/import", s.ImportSave).Methods("POST")
+
+	// Operator endpoints (session token + users.op).
+	s.registerAdminRoutes(v2)
 
 	handler := handlers.CORS(
 		handlers.AllowedHeaders([]string{"Content-Type", "Authorization"}),

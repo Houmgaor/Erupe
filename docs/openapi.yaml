@@ -249,6 +249,293 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  # ── Operator endpoints ───────────────────────────────────────────────────
+  # All /v2/admin routes take the same bearer token as the player endpoints
+  # and additionally require users.op = true (403 otherwise). Every mutation
+  # is logged with the operator's user ID.
+
+  /v2/admin/users:
+    get:
+      summary: Search accounts
+      operationId: adminSearchUsers
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: q, schema: { type: string }, description: Case-insensitive username substring }
+        - { in: query, name: limit, schema: { type: integer, default: 50, maximum: 200 } }
+      responses:
+        "200":
+          description: Matching accounts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users: { type: array, items: { $ref: "#/components/schemas/AdminUser" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v2/admin/users/{id}:
+    get:
+      summary: Account detail with characters
+      operationId: adminGetUser
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+      responses:
+        "200":
+          description: Account and its characters
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/AdminUser"
+                  - type: object
+                    properties:
+                      characters: { type: array, items: { $ref: "#/components/schemas/Character" } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      summary: Grant/revoke operator rights or set the rights bitfield
+      operationId: adminUpdateUser
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                op: { type: boolean }
+                rights: { type: integer, description: Course bitfield, see wiki Enumerations }
+      responses:
+        "200":
+          description: Updated account
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminUser" }
+        "400":
+          description: Neither field given, or an operator removing their own op flag (`self_demotion`)
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v2/admin/users/{id}/password:
+    post:
+      summary: Reset an account password
+      operationId: adminSetPassword
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string }
+      responses:
+        "204": { description: Password replaced }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v2/admin/users/{id}/ban:
+    post:
+      summary: Ban an account (permanent unless `expires` is given)
+      operationId: adminBan
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expires: { type: string, format: date-time }
+      responses:
+        "204": { description: Banned }
+        "400": { description: Expiry in the past, or banning yourself (`self_ban`) }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Lift a ban
+      operationId: adminUnban
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+      responses:
+        "204": { description: Unbanned (also when there was no ban) }
+
+  /v2/admin/notices:
+    get:
+      summary: List login notices
+      operationId: adminListNotices
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: all, schema: { type: string }, description: Any value includes expired notices }
+      responses:
+        "200":
+          description: Notices
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notices: { type: array, items: { $ref: "#/components/schemas/Notice" } }
+    post:
+      summary: Add a login notice
+      description: Shown at sign-in after the static `LoginNotices` from config.json, without a restart.
+      operationId: adminCreateNotice
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, maxLength: 4096, description: MHFML text }
+                expires: { type: string, format: date-time }
+      responses:
+        "201":
+          description: Created notice
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Notice" }
+
+  /v2/admin/notices/{id}:
+    delete:
+      summary: Remove a login notice
+      operationId: adminDeleteNotice
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v2/admin/distributions:
+    get:
+      summary: List gift-box distributions
+      operationId: adminListDistributions
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Distributions (headers only)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  distributions: { type: array, items: { $ref: "#/components/schemas/Distribution" } }
+    post:
+      summary: Create a distribution with its items
+      description: |
+        `characterId` null = every character. `type` and `items[].itemType`
+        follow the Distribution enumerations on the wiki. `eventName`,
+        `description` and `timesAcceptable` default to the game's GM-gift values.
+      operationId: adminCreateDistribution
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/Distribution"
+                - type: object
+                  required: [items]
+                  properties:
+                    items: { type: array, minItems: 1, items: { $ref: "#/components/schemas/DistributionItem" } }
+      responses:
+        "201":
+          description: Created distribution with its items
+        "400": { description: No items, or a non-positive quantity }
+
+  /v2/admin/distributions/{id}:
+    get:
+      summary: Distribution with its items
+      operationId: adminGetDistribution
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+      responses:
+        "200": { description: Distribution and items }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Delete a distribution and its items
+      operationId: adminDeleteDistribution
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v2/admin/events:
+    get:
+      summary: List event rows (festa, diva, vs, mezfes)
+      operationId: adminListEvents
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events: { type: array, items: { $ref: "#/components/schemas/AdminEvent" } }
+
+  /v2/admin/events/{type}:
+    put:
+      summary: Start (or restart) an event cycle
+      description: |
+        Replaces every row of that type with one starting at `startTime`
+        (default now). The game derives the whole schedule from that row, so
+        this is how a Diva Defense or Festa cycle is restarted.
+      operationId: adminStartEvent
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: type, required: true, schema: { type: string, enum: [festa, diva, vs, mezfes] } }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                startTime: { type: string, format: date-time }
+      responses:
+        "200":
+          description: The new event row
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminEvent" }
+        "400": { description: Unknown event type }
+    delete:
+      summary: Stop an event (remove its rows)
+      operationId: adminStopEvent
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: type, required: true, schema: { type: string, enum: [festa, diva, vs, mezfes] } }]
+      responses:
+        "200":
+          description: Number of rows removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  removed: { type: integer }
+
   /mhf_file.php:
     get:
       summary: Game-file manifest or connectivity check (patch tree)
@@ -341,7 +628,70 @@ components:
             error: internal_error
             message: Internal server error
 
+    Forbidden:
+      description: Operator rights required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: No such resource
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
   schemas:
+    AdminUser:
+      type: object
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        rights: { type: integer }
+        op: { type: boolean }
+        lastLogin: { type: string, format: date-time, nullable: true }
+        discordId: { type: string, nullable: true }
+        psnId: { type: string, nullable: true }
+        banned: { type: boolean }
+        banExpires: { type: string, format: date-time, nullable: true, description: null for a permanent ban or no ban }
+    Notice:
+      type: object
+      properties:
+        id: { type: integer }
+        body: { type: string }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, nullable: true }
+    Distribution:
+      type: object
+      properties:
+        id: { type: integer, readOnly: true }
+        characterId: { type: integer, nullable: true }
+        type: { type: integer }
+        deadline: { type: string, format: date-time, nullable: true }
+        eventName: { type: string }
+        description: { type: string }
+        timesAcceptable: { type: integer }
+        minHr: { type: integer, nullable: true }
+        maxHr: { type: integer, nullable: true }
+        minSr: { type: integer, nullable: true }
+        maxSr: { type: integer, nullable: true }
+        minGr: { type: integer, nullable: true }
+        maxGr: { type: integer, nullable: true }
+        rights: { type: integer, nullable: true }
+        selection: { type: boolean, nullable: true }
+    DistributionItem:
+      type: object
+      required: [itemType]
+      properties:
+        itemType: { type: integer }
+        itemId: { type: integer, nullable: true }
+        quantity: { type: integer, nullable: true }
+    AdminEvent:
+      type: object
+      properties:
+        id: { type: integer }
+        eventType: { type: string, enum: [festa, diva, vs, mezfes] }
+        startTime: { type: string, format: date-time }
     ErrorResponse:
       type: object
       required: [error, message]
