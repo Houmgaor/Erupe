@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [9.5.0] - 2026-09-19
+
 ### Added
 - Operator REST API under `/v2/admin` (same bearer token as players, plus `users.op`): account search/detail, op and rights changes, password reset, ban/unban, login notices, gift-box distributions with items, and event cycles (start/restart/stop Festa, Diva, VS, MezFes). Every mutation is logged with the operator's ID. Notices live in a new `notices` table (migration `0027`) and are appended to the static `LoginNotices` at sign-in and in the login payload, so an announcement no longer needs a config edit and a restart. Documented in `docs/openapi.yaml` and the wiki. First step of #16.
 - Erupe can now host the game-file tree clients sync from (`API.PatchTree: {Enabled, Root}`, package `server/patchtree`): serves `/mhf_file.php?key|chk` and `/mhfdat/…` from the API port with the exact shapes `mhl.dll` and mhf-outpost issue, regenerates the CRC32 manifest on startup when any file is newer than it, and advertises `http://<Host>:<API.Port>` as `API.PatchServer` unless one is set. `cmd/patchtree` generates the same manifest for trees hosted elsewhere.
