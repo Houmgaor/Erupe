@@ -68,6 +68,7 @@ func (m Mode) String() string {
 type Config struct {
 	Host                      string `mapstructure:"Host"`
 	BinPath                   string `mapstructure:"BinPath"`
+	ContentPath               string `mapstructure:"ContentPath"` // Directory of <table>/*.json content files synchronised into the database (see server/migrations/content.go); empty = <BinPath>/content
 	Language                  string
 	DisableShutdownCountdown  bool     `mapstructure:"DisableShutdownCountdown"` // Skip the in-game shutdown countdown (lets scripts restart the server unattended). Previously named DisableSoftCrash — legacy key still accepted.
 	ShutdownCountdownSeconds  int      // Seconds to count down before shutting down (default 10; ignored when DisableShutdownCountdown is true)
@@ -122,6 +123,22 @@ const legacyBinPath = "bin"
 // rule; this is the same logic, applied to this Config's BinPath.
 func (c *Config) ResolvedBinPath() string {
 	return ResolveBinPath(c.BinPath)
+}
+
+// ContentSubdir is the directory under the quest-data directory that holds
+// content files when ContentPath is not set.
+const ContentSubdir = "content"
+
+// ResolvedContentPath returns the directory of content files (shop rows,
+// prize lists… as <table>/*.json, see server/migrations/content.go):
+// ContentPath when set, else "content" inside ResolvedBinPath so an
+// operator finds all editable game data in one place. The directory need
+// not exist; nothing is synchronised when it doesn't.
+func (c *Config) ResolvedContentPath() string {
+	if c.ContentPath != "" {
+		return c.ContentPath
+	}
+	return filepath.Join(c.ResolvedBinPath(), ContentSubdir)
 }
 
 // ResolveBinPath decides which directory to use given a configured BinPath
@@ -424,6 +441,7 @@ func registerDefaults() {
 	// Top-level settings
 	viper.SetDefault("Language", "jp")
 	viper.SetDefault("BinPath", "bin")
+	viper.SetDefault("ContentPath", "")
 	viper.SetDefault("HideLoginNotice", true)
 	viper.SetDefault("LoginNotices", []string{
 		"<BODY><CENTER><SIZE_3><C_4>Welcome to Erupe!",

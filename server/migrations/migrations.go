@@ -15,7 +15,7 @@ import (
 //go:embed sql/*.sql
 var migrationFS embed.FS
 
-//go:embed seed/*.sql
+//go:embed seed/*.sql seed/*/*.json
 var seedFS embed.FS
 
 // Migrate creates the schema_version table if needed, detects existing databases
@@ -55,25 +55,42 @@ func Migrate(db *sqlx.DB, logger *zap.Logger) (int, error) {
 	return count, nil
 }
 
-// ApplySeedData runs all seed/*.sql files. Not tracked in schema_version.
-// Safe to run multiple times if seed files use ON CONFLICT DO NOTHING.
+// ApplySeedData runs all seed/*.sql files and seed/<table>/*.json files. Not
+// tracked in schema_version. Safe to run multiple times if seed files use ON
+// CONFLICT DO NOTHING (SQL) or "onConflict" (JSON).
+//
+// JSON seed files (see seed_json.go) are a hand-editing-friendly alternative
+// to SQL for plain tabular data; seed data needing real SQL logic (subqueries,
+// idempotency guards, NOW()-relative rows) stays as .sql. Each JSON file's
+// table comes from its enclosing seed/<table>/ directory rather than a field
+// inside the file, so a directory can't disagree with its own contents and
+// a file can never straddle two tables.
 func ApplySeedData(db *sqlx.DB, logger *zap.Logger) (int, error) {
-	files, err := fs.ReadDir(seedFS, "seed")
+	seedDir, err := fs.Sub(seedFS, "seed")
+	if err != nil {
+		return 0, fmt.Errorf("opening seed directory: %w", err)
+	}
+
+	entries, err := fs.ReadDir(seedDir, ".")
 	if err != nil {
 		return 0, fmt.Errorf("reading seed directory: %w", err)
 	}
 
-	var names []string
-	for _, f := range files {
-		if !f.IsDir() && strings.HasSuffix(f.Name(), ".sql") {
-			names = append(names, f.Name())
+	var sqlNames []string
+	var tables []string
+	for _, e := range entries {
+		if e.IsDir() {
+			tables = append(tables, e.Name())
+		} else if strings.HasSuffix(e.Name(), ".sql") {
+			sqlNames = append(sqlNames, e.Name())
 		}
 	}
-	sort.Strings(names)
+	sort.Strings(sqlNames)
+	sort.Strings(tables)
 
 	count := 0
-	for _, name := range names {
-		data, err := seedFS.ReadFile("seed/" + name)
+	for _, name := range sqlNames {
+		data, err := fs.ReadFile(seedDir, name)
 		if err != nil {
 			return count, fmt.Errorf("reading seed file %s: %w", name, err)
 		}
@@ -82,6 +99,92 @@ func ApplySeedData(db *sqlx.DB, logger *zap.Logger) (int, error) {
 			return count, fmt.Errorf("executing seed file %s: %w", name, err)
 		}
 		count++
+	}
+
+	jsonCount, err := applySeedJSONTables(db, logger, seedDir, tables)
+	return count + jsonCount, err
+}
+
+// seedJSONFile pairs a JSON seed file with the table its enclosing directory
+// names.
+type seedJSONFile struct {
+	table string
+	path  string // "<table>/<name>.json", relative to seedDir
+}
+
+// applySeedJSONTables applies every <table>/*.json file under seedDir. Table
+// directories are attempted in alphabetical order, but that order isn't
+// guaranteed to satisfy foreign-key dependencies between seeded tables (e.g.
+// "campaigns" sorts after "campaign_rewards", which references it) — rather
+// than hardcode dependency order (reintroducing the coupling this format
+// avoids elsewhere), a file that fails on a foreign-key violation is retried
+// after the rest of the batch, until a full pass makes no progress.
+func applySeedJSONTables(db *sqlx.DB, logger *zap.Logger, seedDir fs.FS, tables []string) (int, error) {
+	pending, err := listJSONTableFiles(seedDir, tables)
+	if err != nil {
+		return 0, err
+	}
+	return applyWithFKRetry(pending, func(f seedJSONFile) error {
+		data, err := fs.ReadFile(seedDir, f.path)
+		if err != nil {
+			return fmt.Errorf("reading seed file %s: %w", f.path, err)
+		}
+		logger.Info(fmt.Sprintf("Applying seed data: seed/%s", f.path))
+		return applySeedJSON(db, f.path, f.table, data)
+	})
+}
+
+// listJSONTableFiles collects <table>/*.json for each table directory, in
+// directory then file name order.
+func listJSONTableFiles(dir fs.FS, tables []string) ([]seedJSONFile, error) {
+	var files []seedJSONFile
+	for _, table := range tables {
+		if !identifierPattern.MatchString(table) {
+			return nil, fmt.Errorf("invalid table directory name %q", table)
+		}
+		names, err := fs.ReadDir(dir, table)
+		if err != nil {
+			return nil, fmt.Errorf("reading %s: %w", table, err)
+		}
+		var jsonNames []string
+		for _, n := range names {
+			if !n.IsDir() && strings.HasSuffix(n.Name(), ".json") {
+				jsonNames = append(jsonNames, n.Name())
+			}
+		}
+		sort.Strings(jsonNames)
+		for _, name := range jsonNames {
+			files = append(files, seedJSONFile{table: table, path: table + "/" + name})
+		}
+	}
+	return files, nil
+}
+
+// applyWithFKRetry runs apply on every file, deferring the ones that fail
+// on a foreign-key violation to a later pass (see applySeedJSONTables). Any
+// other error stops the run. Returns how many files were applied.
+func applyWithFKRetry(pending []seedJSONFile, apply func(seedJSONFile) error) (int, error) {
+	count := 0
+	for len(pending) > 0 {
+		var retry []seedJSONFile
+		var lastErr error
+		progressed := false
+		for _, f := range pending {
+			if err := apply(f); err != nil {
+				if isForeignKeyViolation(err) {
+					retry = append(retry, f)
+					lastErr = err
+					continue
+				}
+				return count, err
+			}
+			count++
+			progressed = true
+		}
+		if !progressed {
+			return count, fmt.Errorf("could not resolve apply order (circular or missing foreign key target?): %w", lastErr)
+		}
+		pending = retry
 	}
 	return count, nil
 }

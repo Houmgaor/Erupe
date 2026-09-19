@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Content files: an operator can keep game content (shop rows, exchange and prize lists, event quests, campaigns…) as `game-data/content/<table>/*.json` and Erupe synchronises the tables to them on every start and on `POST /v2/admin/content/reload` — no restart, no SQL. The format is the seed format, so copying `server/migrations/seed/shop_items/road.json` into the content directory is the starting point; a file declares a `key` (rows are updated in place, keeping their `id` and the purchase counters that reference it) and optionally a `scope` (rows it owns; unlisted ones are deleted). Each file is one transaction; a bad file is reported with its name and the server keeps running on what the database holds. Off unless the directory exists; `ContentPath` in the config overrides the location. Second step of #16.
+- JSON seed format alongside `server/migrations/seed/*.sql` (from Mezeporta/Erupe#205): plain tabular seeds are now `seed/<table>/*.json` — one directory per table, one object per row, a `comment` documenting every column — loaded by `server/migrations/seed_json.go`; `GachaDemo`, `DistributionDemo` and `TournamentDefaults` stay SQL. Verified row for row against the SQL they replace on a scratch database. The shipped files declare their natural `key` so they double as content-file templates.
+
+### Fixed
+
+- `seed/shop_items/road.json` carries the `0026` revert of item 9958 (Superior Ticket: cost 20, quantity 1, `road_fatalis` 999) — the JSON conversion predated it — and no longer lists five limited-tab rows twice (`item_id` 10750, 13508, 14705, 15027, 15028), which showed each item twice in game.
+
 ## [9.5.0] - 2026-09-19
 
 ### Added

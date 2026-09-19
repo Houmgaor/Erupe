@@ -1,6 +1,7 @@
 {
   "Host": "127.0.0.1",
   "BinPath": "bin",
+  "ContentPath": "",
   "Language": "en",
   "DisableShutdownCountdown": false,
   "ShutdownCountdownSeconds": 10,

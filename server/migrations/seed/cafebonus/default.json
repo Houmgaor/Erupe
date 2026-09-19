@@ -1,0 +1,15 @@
+{
+  "comment": "NetCafe point bonus tiers: logging a session of at least time_req seconds grants item_type/item_id x quantity. truncate=true because this table is a fixed tier ladder meant to be fully replaced on reseed, not appended to.",
+  "truncate": true,
+  "key": ["time_req"],
+  "scope": {},
+  "rows": [
+    {"time_req": 1800, "item_type": 17, "item_id": 0, "quantity": 50},
+    {"time_req": 3600, "item_type": 17, "item_id": 0, "quantity": 100},
+    {"time_req": 7200, "item_type": 17, "item_id": 0, "quantity": 200},
+    {"time_req": 10800, "item_type": 17, "item_id": 0, "quantity": 300},
+    {"time_req": 18000, "item_type": 17, "item_id": 0, "quantity": 350},
+    {"time_req": 28800, "item_type": 17, "item_id": 0, "quantity": 500},
+    {"time_req": 43200, "item_type": 17, "item_id": 0, "quantity": 500}
+  ]
+}
