@@ -187,9 +187,8 @@ func saveAllCharacterData(s *Session, rpToAdd int) error {
 
 	// Update RP if any gained during session
 	if rpToAdd > 0 {
-		characterSaveData.RP += uint16(rpToAdd)
+		characterSaveData.RP = addRPWithCap(characterSaveData.RP, rpToAdd, s.server.erupeConfig.GameplayOptions.MaximumRP)
 		if characterSaveData.RP >= s.server.erupeConfig.GameplayOptions.MaximumRP {
-			characterSaveData.RP = s.server.erupeConfig.GameplayOptions.MaximumRP
 			s.logger.Debug("RP capped at maximum",
 				zap.Uint16("max_rp", s.server.erupeConfig.GameplayOptions.MaximumRP),
 				zap.Uint32("charID", s.charID),
@@ -264,15 +263,12 @@ func logoutPlayer(s *Session) {
 		sessionTime = int(TimeAdjusted().Unix()) - int(s.sessionStart)
 		timePlayed += sessionTime
 
-		if mhfcourse.CourseExists(30, s.courses) {
-			rpGained = timePlayed / rpAccrualCafe
-			timePlayed = timePlayed % rpAccrualCafe
+		cafe := mhfcourse.CourseExists(30, s.courses)
+		rpGained, timePlayed = accrueRP(timePlayed, cafe, s.server.erupeConfig.GameplayOptions)
+		if cafe {
 			if _, err := s.server.charRepo.AdjustInt(s.charID, "cafe_time", sessionTime); err != nil {
 				s.logger.Error("Failed to update cafe time", zap.Error(err))
 			}
-		} else {
-			rpGained = timePlayed / rpAccrualNormal
-			timePlayed = timePlayed % rpAccrualNormal
 		}
 
 		s.logger.Debug("Session metrics calculated",
@@ -441,11 +437,24 @@ const (
 	killLogMonsterCount = 176 // monster table entries
 )
 
-// RP accrual rate constants (seconds per RP point)
-const (
-	rpAccrualNormal = 1800 // 30 min per RP without cafe
-	rpAccrualCafe   = 900  // 15 min per RP with cafe course
-)
+func accrueRP(seconds int, cafe bool, options cfg.GameplayOptions) (int, int) {
+	interval := options.RPAccrualNormalSeconds
+	if cafe {
+		interval = options.RPAccrualCafeSeconds
+	}
+	return seconds / interval, seconds % interval
+}
+
+func addRPWithCap(current uint16, gained int, maximum uint16) uint16 {
+	if gained <= 0 {
+		return current
+	}
+	// Compare before adding or narrowing: even a very large gain cannot wrap.
+	if current >= maximum || gained >= int(maximum)-int(current) {
+		return maximum
+	}
+	return current + uint16(gained)
+}
 
 func handleMsgSysRecordLog(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgSysRecordLog)

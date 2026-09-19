@@ -39,7 +39,7 @@ func createMockServer() *Server {
 	logger, _ := zap.NewDevelopment()
 	s := &Server{
 		logger:      logger,
-		erupeConfig: &cfg.Config{},
+		erupeConfig: &cfg.Config{GameplayOptions: cfg.GameplayOptions{RPAccrualNormalSeconds: 1800, RPAccrualCafeSeconds: 900}},
 		// stages is a StageMap (zero value is ready to use)
 		sessions:     make(map[net.Conn]*Session),
 		handlerTable: buildHandlerTable(),

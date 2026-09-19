@@ -68,6 +68,8 @@
     "MaxFeatureWeapons": 1,
     "MaximumNP": 100000,
     "MaximumRP": 50000,
+    "RPAccrualNormalSeconds": 1800,
+    "RPAccrualCafeSeconds": 900,
     "MaximumFP": 120000,
     "TreasureHuntExpiry": 604800,
     "DisableLoginBoost": false,
