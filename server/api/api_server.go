@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"erupe-ce/server/patchtree"
+
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"github.com/jmoiron/sqlx"
@@ -82,6 +84,12 @@ func (s *APIServer) Start() error {
 	r.HandleFunc("/health", s.Health)
 	r.HandleFunc("/version", s.Version)
 
+	// Game-file tree for the original launcher and mhf-outpost, when the
+	// operator chose to host it from Erupe rather than a web server.
+	if s.erupeConfig.API.PatchTree.Enabled {
+		s.mountPatchTree(r)
+	}
+
 	// V2 routes (with HTTP method enforcement)
 	v2 := r.PathPrefix("/v2").Subrouter()
 	v2.HandleFunc("/login", s.Login).Methods("POST")
@@ -138,4 +146,38 @@ func (s *APIServer) Shutdown() {
 		// Just warn because we are shutting down the server anyway.
 		s.logger.Warn("Got error on httpServer shutdown", zap.Error(err))
 	}
+}
+
+// mountPatchTree registers the launcher-facing file routes and makes sure
+// the manifest reflects the files on disk. Manifest generation reads every
+// byte of the tree (about 5 GB for ZZ), so it runs in the background and only
+// when a file is newer than the manifest; the manifest route answers 503
+// until the first one exists.
+func (s *APIServer) mountPatchTree(r *mux.Router) {
+	root := s.erupeConfig.API.PatchTree.Root
+	r.Handle("/mhf_file.php", patchtree.ManifestHandler(root))
+	r.PathPrefix("/" + patchtree.FilesDir + "/").Handler(patchtree.FilesHandler(root))
+
+	stale, err := patchtree.Stale(root)
+	if err != nil {
+		s.logger.Warn("Patch tree: cannot read root; files will not be served",
+			zap.String("root", root), zap.Error(err))
+		return
+	}
+	s.logger.Info("Patch tree: serving game files",
+		zap.String("root", root), zap.String("advertised", s.erupeConfig.API.PatchServer))
+	if !stale {
+		return
+	}
+	go func() {
+		s.logger.Info("Patch tree: manifest missing or out of date, regenerating", zap.String("root", root))
+		start := time.Now()
+		n, err := patchtree.Generate(root)
+		if err != nil {
+			s.logger.Error("Patch tree: manifest generation failed", zap.Error(err))
+			return
+		}
+		s.logger.Info("Patch tree: manifest regenerated",
+			zap.Int("files", n), zap.Duration("took", time.Since(start).Round(time.Millisecond)))
+	}()
 }

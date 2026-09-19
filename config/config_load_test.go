@@ -698,3 +698,63 @@ func TestSingleFieldOverride(t *testing.T) {
 		t.Errorf("GCPMultiplier = %v, want 1.0 (should retain default)", cfg.GameplayOptions.GCPMultiplier)
 	}
 }
+
+// TestPatchTreeConfig verifies the PatchTree defaults and that enabling it
+// advertises the server's own address unless PatchServer is set explicitly.
+func TestPatchTreeConfig(t *testing.T) {
+	cases := []struct {
+		name            string
+		config          string
+		wantEnabled     bool
+		wantRoot        string
+		wantPatchServer string
+	}{
+		{
+			name:            "disabled by default, PatchServer untouched",
+			config:          `{"Host": "203.0.113.10", "Database": {"Password": "x"}}`,
+			wantEnabled:     false,
+			wantRoot:        "patch",
+			wantPatchServer: "",
+		},
+		{
+			name:            "enabled only: root keeps its default, PatchServer derived from Host and port",
+			config:          `{"Host": "203.0.113.10", "Database": {"Password": "x"}, "API": {"Port": 8081, "PatchTree": {"Enabled": true}}}`,
+			wantEnabled:     true,
+			wantRoot:        "patch",
+			wantPatchServer: "http://203.0.113.10:8081",
+		},
+		{
+			name:            "explicit PatchServer wins",
+			config:          `{"Host": "203.0.113.10", "Database": {"Password": "x"}, "API": {"PatchServer": "http://files.example.com", "PatchTree": {"Enabled": true, "Root": "/srv/mhf"}}}`,
+			wantEnabled:     true,
+			wantRoot:        "/srv/mhf",
+			wantPatchServer: "http://files.example.com",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			viper.Reset()
+			dir := t.TempDir()
+			origDir, _ := os.Getwd()
+			defer func() { _ = os.Chdir(origDir) }()
+			if err := os.Chdir(dir); err != nil {
+				t.Fatal(err)
+			}
+			writeMinimalConfig(t, dir, tc.config)
+
+			cfg, err := LoadConfig()
+			if err != nil {
+				t.Fatalf("LoadConfig() error: %v", err)
+			}
+			if cfg.API.PatchTree.Enabled != tc.wantEnabled {
+				t.Errorf("PatchTree.Enabled = %v, want %v", cfg.API.PatchTree.Enabled, tc.wantEnabled)
+			}
+			if cfg.API.PatchTree.Root != tc.wantRoot {
+				t.Errorf("PatchTree.Root = %q, want %q", cfg.API.PatchTree.Root, tc.wantRoot)
+			}
+			if cfg.API.PatchServer != tc.wantPatchServer {
+				t.Errorf("PatchServer = %q, want %q", cfg.API.PatchServer, tc.wantPatchServer)
+			}
+		})
+	}
+}

@@ -221,6 +221,10 @@
     "Enabled": true,
     "Port": 8080,
     "PatchServer": "",
+    "PatchTree": {
+      "Enabled": false,
+      "Root": "patch"
+    },
     "Banners": [],
     "Messages": [],
     "Links": [],
