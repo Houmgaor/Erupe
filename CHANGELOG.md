@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reverted `0024_fix_road_shop_item_9958.sql` (new migration `0026_revert_road_shop_item_9958.sql`, plus the matching seed row). Item 9958 is スペリアチケット (Superior Ticket), not a bulk consumable: its nonzero `road_fatalis` is the Fatalis-kill gate the client renders, not a stray value, so rewriting the row to `cost=1/quantity=999/road_fatalis=0` turned a gated single ticket into an ungated 999x bulk purchase. The revert is guarded on the row still matching what 0024 wrote, so a deployment that has since retuned the item keeps its own values.
+- `ShopRepository.GetShopItems` now returns rows `ORDER BY cost ASC, id ASC` instead of an unordered scan. Because `handleMsgMhfEnumerateShop` truncates oversized item shops at `maxItemShopRows`, PostgreSQL heap order was deciding which rows reached the client — so a row could silently disappear from a shop after any `UPDATE` or `VACUUM` moved it past the cut. Sorting by cost keeps cheap consumables in the surviving prefix and makes the result stable across restarts.
+- `cmd/protbot`: `MSG_MHF_ENUMERATE_QUEST` opcode was `0x009F`, one below its real value `0x00A0` (160th entry of `network.PacketID`), so the quest-list scenario sent the wrong packet.
 - `handleMsgMhfSetUdTacticsFollower` had an empty body that sent no ACK at all (guaranteed client softlock for that packet), and its packet's `Parse()` unconditionally returned an error so the handler was never even reached. Implemented `Parse()` (AckHandle + 4 unknown uint16 fields) and a simple-succeed ACK.
 
 ## [9.4.2] - 2026-08-20
