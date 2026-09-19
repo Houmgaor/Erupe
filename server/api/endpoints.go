@@ -135,7 +135,17 @@ func (s *APIServer) newAuthData(userID uint32, userRights uint32, userTokenID ui
 	}
 	resp.MezFes = s.buildMezFes()
 	if !s.erupeConfig.HideLoginNotice {
-		resp.Notices = append(resp.Notices, strings.Join(s.erupeConfig.LoginNotices[:], "<PAGE>"))
+		notices := append([]string(nil), s.erupeConfig.LoginNotices...)
+		if s.adminRepo != nil {
+			if extra, err := s.adminRepo.ListNotices(context.Background(), true); err == nil {
+				for _, n := range extra {
+					notices = append(notices, n.Body)
+				}
+			} else {
+				s.logger.Warn("Failed to load runtime login notices", zap.Error(err))
+			}
+		}
+		resp.Notices = append(resp.Notices, strings.Join(notices, "<PAGE>"))
 	}
 	return resp
 }

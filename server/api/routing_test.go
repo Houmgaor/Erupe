@@ -46,6 +46,8 @@ func newTestRouter(s *APIServer) *mux.Router {
 	v2.HandleFunc("/server/status", s.ServerStatus).Methods("GET")
 	v2.HandleFunc("/server/info", s.ServerInfo).Methods("GET")
 
+	s.registerAdminRoutes(v2)
+
 	return r
 }
 

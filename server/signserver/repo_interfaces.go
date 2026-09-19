@@ -64,3 +64,10 @@ type SignSessionRepo interface {
 	Validate(token string, tokenID uint32) (bool, error)
 	GetPSNIDByToken(token string) (string, error)
 }
+
+// SignNoticeRepo reads the runtime login notices created through the admin
+// API (notices table). They are appended to the static LoginNotices from
+// config.json when a client signs in.
+type SignNoticeRepo interface {
+	ActiveNotices() ([]string, error)
+}

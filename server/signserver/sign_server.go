@@ -27,6 +27,7 @@ type Server struct {
 	userRepo       SignUserRepo
 	charRepo       SignCharacterRepo
 	sessionRepo    SignSessionRepo
+	noticeRepo     SignNoticeRepo
 	listener       net.Listener
 	isShuttingDown bool
 }
@@ -41,6 +42,7 @@ func NewServer(config *Config) *Server {
 		s.userRepo = NewSignUserRepository(config.DB)
 		s.charRepo = NewSignCharacterRepository(config.DB)
 		s.sessionRepo = NewSignSessionRepository(config.DB)
+		s.noticeRepo = NewSignNoticeRepository(config.DB)
 	}
 	return s
 }
@@ -121,4 +123,21 @@ func (s *Server) handleConnection(conn net.Conn) {
 	if session.captureCleanup != nil {
 		session.captureCleanup()
 	}
+}
+
+// loginNotices returns the notices shown at sign-in: the static ones from
+// config.json followed by the runtime ones from the notices table. A
+// database error only drops the runtime part; login must not fail over a
+// notice.
+func (s *Server) loginNotices() []string {
+	notices := append([]string(nil), s.erupeConfig.LoginNotices...)
+	if s.noticeRepo == nil {
+		return notices
+	}
+	extra, err := s.noticeRepo.ActiveNotices()
+	if err != nil {
+		s.logger.Warn("Failed to load runtime login notices", zap.Error(err))
+		return notices
+	}
+	return append(notices, extra...)
 }
