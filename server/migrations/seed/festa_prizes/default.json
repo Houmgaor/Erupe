@@ -1,5 +1,7 @@
 {
   "comment": "Hunting Festival (Festa) soul-point milestone rewards, read by FestaRepository.ListPrizes (repo_festa.go), filtered by type. type: 'personal' or 'guild' track. tier: the festival team/rank tier (1-3) this reward applies to. souls_req: cumulative souls needed to unlock it. item_id/num_item: the reward item and quantity granted.",
+  "key": ["tier", "souls_req", "item_id"],
+  "scope": {},
   "rows": [
     {"type": "personal", "tier": 1, "souls_req": 1, "item_id": 9647, "num_item": 7},
     {"type": "personal", "tier": 2, "souls_req": 1, "item_id": 9647, "num_item": 7},

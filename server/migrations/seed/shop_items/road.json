@@ -1,5 +1,7 @@
 {
   "comment": "Hunter's Road item shop/forge: shop_type=10 ('Item shop, 0-8' in handleMsgMhfEnumerateShop, handlers_shop.go), shop_id (4/7/8 here) selects the sub-tab. cost/quantity: price and per-purchase amount granted. min_hr/min_sr/min_gr: minimum Hunter/Star/G Rank to see the row. store_level: unlock tier within the shop. max_quantity: purchase cap per character (0 = unlimited). road_floors: minimum Hunter's Road floor reached to unlock the row. road_fatalis: Road Fatalis kill count required to unlock the row; the server only relays the value, the client renders the gate (only item 9958, Superior Ticket, uses it here: 999 kills, see migration 0026). The client shows at most 256 rows per tab, sorted cost ASC then id ASC; the ZZ client also accepts shop_id 5 as a road-shop tab, so a tab that outgrows 256 rows can be split.",
+  "key": ["shop_type", "shop_id", "item_id"],
+  "scope": {"shop_type": 10},
   "rows": [
     {"shop_type": 10, "shop_id": 4, "item_id": 11664, "cost": 20000, "quantity": 1, "min_hr": 0, "min_sr": 0, "min_gr": 1, "store_level": 1, "max_quantity": 0, "road_floors": 0, "road_fatalis": 0},
     {"shop_type": 10, "shop_id": 4, "item_id": 11665, "cost": 20000, "quantity": 1, "min_hr": 0, "min_sr": 0, "min_gr": 1, "store_level": 1, "max_quantity": 0, "road_floors": 0, "road_fatalis": 0},
