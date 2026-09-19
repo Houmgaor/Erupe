@@ -536,6 +536,32 @@ paths:
                 properties:
                   removed: { type: integer }
 
+  /v2/admin/content/reload:
+    post:
+      summary: Synchronise the content directory into the database
+      description: |
+        Re-reads `<ContentPath>/<table>/*.json` (default `game-data/content/`)
+        and makes each table match its files: rows are matched on the file's
+        `key`, updated in place, inserted, and — inside the file's `scope` —
+        deleted when no longer listed. Each file is one transaction; on an
+        error the files applied before it stay applied and are listed.
+        Shop rows are read per request, so the change is live at once.
+      operationId: adminReloadContent
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Every file was synchronised
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContentReload" }
+        "404": { description: The content directory does not exist }
+        "422":
+          description: A file could not be applied; `message` names it, `files` lists what was applied before
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContentReload" }
+
   /mhf_file.php:
     get:
       summary: Game-file manifest or connectivity check (patch tree)
@@ -686,6 +712,23 @@ components:
         itemType: { type: integer }
         itemId: { type: integer, nullable: true }
         quantity: { type: integer, nullable: true }
+    ContentResult:
+      type: object
+      properties:
+        path: { type: string, example: shop_items/road.json }
+        table: { type: string, example: shop_items }
+        inserted: { type: integer }
+        updated: { type: integer }
+        deleted: { type: integer }
+    ContentReload:
+      type: object
+      properties:
+        dir: { type: string }
+        files:
+          type: array
+          items: { $ref: "#/components/schemas/ContentResult" }
+        error: { type: string, description: Present on 422 }
+        message: { type: string, description: Present on 422 }
     AdminEvent:
       type: object
       properties:

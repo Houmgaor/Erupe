@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"os/signal"
@@ -218,6 +219,23 @@ func main() {
 			logger.Warn(fmt.Sprintf("Seed data failed: %s", seedErr.Error()))
 		} else if seedApplied > 0 {
 			logger.Info(fmt.Sprintf("Database: Applied %d seed data file(s)", seedApplied))
+		}
+	}
+
+	// Content files (<content dir>/<table>/*.json) are synchronised on every
+	// start when the directory exists; see server/migrations/content.go.
+	// A bad file is logged and the server keeps running on what the
+	// database holds, like a failed seed.
+	{
+		contentDir := config.ResolvedContentPath()
+		results, contentErr := migrations.ApplyContentDir(db, logger.Named("content"), contentDir)
+		switch {
+		case errors.Is(contentErr, fs.ErrNotExist):
+			logger.Debug(fmt.Sprintf("Content: no %s directory, skipping", contentDir))
+		case contentErr != nil:
+			logger.Error(fmt.Sprintf("Content: %s", contentErr.Error()))
+		case len(results) > 0:
+			logger.Info(fmt.Sprintf("Content: Synchronised %d file(s) from %s", len(results), contentDir))
 		}
 	}
 

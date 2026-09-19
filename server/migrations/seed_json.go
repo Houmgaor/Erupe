@@ -35,6 +35,18 @@ type seedJSONBlock struct {
 	// self-documented instead of relying on position against a separate
 	// column list. Every row in a block must have the same set of keys.
 	Rows []map[string]interface{} `json:"rows"`
+	// Key names the columns that identify a row across reloads (a natural
+	// key such as shop_type+shop_id+item_id, never the serial id, which the
+	// database assigns). Required by content files (see content.go), where
+	// rows are matched on it so an edited row keeps its database id; on
+	// first-boot seeds it only has to be unique.
+	Key []string `json:"key,omitempty"`
+	// Scope says which existing rows the file owns, as column -> value (or
+	// -> list of values). A content file deletes rows in its scope that it
+	// no longer lists, and refuses rows outside it; rows may leave scalar
+	// scope columns out, they are filled in. {} means the whole table.
+	// Absent, a content file only inserts and updates.
+	Scope map[string]interface{} `json:"scope,omitempty"`
 }
 
 // identifierPattern restricts table/column names to safe SQL identifiers,
@@ -60,6 +72,9 @@ func applySeedJSON(db *sqlx.DB, name, table string, data []byte) error {
 	block, err := parseSeedJSONBlock(name, table, data)
 	if err != nil {
 		return err
+	}
+	if err := block.validateKey(); err != nil {
+		return fmt.Errorf("%s: %w", name, err)
 	}
 	if err := applySeedJSONBlock(db, block); err != nil {
 		return fmt.Errorf("%s: %w", name, err)
@@ -201,4 +216,51 @@ func normalizeSeedValue(val interface{}) interface{} {
 		return int64(f)
 	}
 	return f
+}
+
+// validateKey checks the optional key declaration: every key column must be
+// a valid identifier present in each row, and no two rows may share a key.
+// Rows are checked as written (before any scope fill-in), so it is safe to
+// call on a block straight out of parseSeedJSONBlock.
+func (b seedJSONBlock) validateKey() error {
+	if len(b.Key) == 0 {
+		return nil
+	}
+	for _, col := range b.Key {
+		if !identifierPattern.MatchString(col) {
+			return fmt.Errorf("invalid key column name %q", col)
+		}
+	}
+	seen := make(map[string]int, len(b.Rows))
+	for r, row := range b.Rows {
+		k, err := rowKey(row, b.Key)
+		if err != nil {
+			return fmt.Errorf("row %d: %w", r, err)
+		}
+		if first, dup := seen[k]; dup {
+			return fmt.Errorf("rows %d and %d have the same key %s", first, r, k)
+		}
+		seen[k] = r
+	}
+	return nil
+}
+
+// rowKey renders a row's key columns as one comparable string.
+func rowKey(row map[string]interface{}, key []string) (string, error) {
+	parts := make([]string, 0, len(key))
+	for _, col := range key {
+		v, ok := row[col]
+		if !ok {
+			return "", fmt.Errorf("missing key column %q", col)
+		}
+		if _, isRaw := v.(map[string]interface{}); isRaw {
+			return "", fmt.Errorf("key column %q cannot be a raw SQL value", col)
+		}
+		enc, err := json.Marshal(v)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, col+"="+string(enc))
+	}
+	return "{" + strings.Join(parts, ", ") + "}", nil
 }

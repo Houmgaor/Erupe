@@ -336,6 +336,7 @@ Erupe uses an embedded auto-migrating schema system. Migrations in [server/migra
 
 - **Migrations**: Numbered SQL files (`0001_init.sql`, `0002_*.sql`, ...) tracked in a `schema_version` table
 - **Seed Data**: Demo templates for shops, distributions, events, and gacha in [server/migrations/seed/](./server/migrations/seed/) — applied automatically on fresh databases
+- **Content Files**: Your own shop rows, prize lists, etc. as `game-data/content/<table>/*.json` (same format as the seeds — copy one and edit it), synchronised on startup and on `POST /v2/admin/content/reload`. Optional; see the wiki's [Database Setup](https://github.com/Houmgaor/Erupe/wiki/Database-Setup#content-files)
 
 ## Development
 

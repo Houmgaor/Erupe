@@ -2,10 +2,15 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"erupe-ce/server/migrations"
 
 	"github.com/gorilla/mux"
 	"go.uber.org/zap"
@@ -65,6 +70,8 @@ func (s *APIServer) registerAdminRoutes(v2 *mux.Router) {
 	admin.HandleFunc("/events", s.AdminListEvents).Methods("GET")
 	admin.HandleFunc("/events/{type}", s.AdminStartEvent).Methods("PUT")
 	admin.HandleFunc("/events/{type}", s.AdminStopEvent).Methods("DELETE")
+
+	admin.HandleFunc("/content/reload", s.AdminReloadContent).Methods("POST")
 }
 
 // audit logs a mutation with the operator who made it.
@@ -483,4 +490,35 @@ func (s *APIServer) AdminStopEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "stop event", zap.String("type", eventType), zap.Int64("removed", n))
 	writeJSON(w, http.StatusOK, map[string]int64{"removed": n})
+}
+
+// ── Content files ────────────────────────────────────────────────────────────
+
+// AdminReloadContent handles POST /v2/admin/content/reload: synchronises the
+// content directory (see server/migrations/content.go) into the database
+// without a restart. Shop rows are read per request, so a reloaded shop is
+// live immediately. Each file is its own transaction: on an error, the
+// files applied before it stay applied and are listed in the reply.
+func (s *APIServer) AdminReloadContent(w http.ResponseWriter, r *http.Request) {
+	dir := s.erupeConfig.ResolvedContentPath()
+	results, err := migrations.ApplyContentDir(s.db, s.logger.Named("content"), dir)
+	if results == nil {
+		results = []migrations.ContentResult{}
+	}
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		writeError(w, http.StatusNotFound, "content_dir_missing", fmt.Sprintf("No content directory at %s", dir))
+		return
+	case err != nil:
+		s.audit(r, "reload content failed", zap.String("dir", dir), zap.Error(err))
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]interface{}{
+			"error":   "content_error",
+			"message": err.Error(),
+			"dir":     dir,
+			"files":   results,
+		})
+		return
+	}
+	s.audit(r, "reload content", zap.String("dir", dir), zap.Int("files", len(results)))
+	writeJSON(w, http.StatusOK, map[string]interface{}{"dir": dir, "files": results})
 }

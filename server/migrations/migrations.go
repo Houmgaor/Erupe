@@ -120,14 +120,31 @@ type seedJSONFile struct {
 // avoids elsewhere), a file that fails on a foreign-key violation is retried
 // after the rest of the batch, until a full pass makes no progress.
 func applySeedJSONTables(db *sqlx.DB, logger *zap.Logger, seedDir fs.FS, tables []string) (int, error) {
-	var pending []seedJSONFile
+	pending, err := listJSONTableFiles(seedDir, tables)
+	if err != nil {
+		return 0, err
+	}
+	return applyWithFKRetry(pending, func(f seedJSONFile) error {
+		data, err := fs.ReadFile(seedDir, f.path)
+		if err != nil {
+			return fmt.Errorf("reading seed file %s: %w", f.path, err)
+		}
+		logger.Info(fmt.Sprintf("Applying seed data: seed/%s", f.path))
+		return applySeedJSON(db, f.path, f.table, data)
+	})
+}
+
+// listJSONTableFiles collects <table>/*.json for each table directory, in
+// directory then file name order.
+func listJSONTableFiles(dir fs.FS, tables []string) ([]seedJSONFile, error) {
+	var files []seedJSONFile
 	for _, table := range tables {
 		if !identifierPattern.MatchString(table) {
-			return 0, fmt.Errorf("invalid seed table directory name %q", table)
+			return nil, fmt.Errorf("invalid table directory name %q", table)
 		}
-		names, err := fs.ReadDir(seedDir, table)
+		names, err := fs.ReadDir(dir, table)
 		if err != nil {
-			return 0, fmt.Errorf("reading seed/%s: %w", table, err)
+			return nil, fmt.Errorf("reading %s: %w", table, err)
 		}
 		var jsonNames []string
 		for _, n := range names {
@@ -137,22 +154,23 @@ func applySeedJSONTables(db *sqlx.DB, logger *zap.Logger, seedDir fs.FS, tables 
 		}
 		sort.Strings(jsonNames)
 		for _, name := range jsonNames {
-			pending = append(pending, seedJSONFile{table: table, path: table + "/" + name})
+			files = append(files, seedJSONFile{table: table, path: table + "/" + name})
 		}
 	}
+	return files, nil
+}
 
+// applyWithFKRetry runs apply on every file, deferring the ones that fail
+// on a foreign-key violation to a later pass (see applySeedJSONTables). Any
+// other error stops the run. Returns how many files were applied.
+func applyWithFKRetry(pending []seedJSONFile, apply func(seedJSONFile) error) (int, error) {
 	count := 0
 	for len(pending) > 0 {
 		var retry []seedJSONFile
 		var lastErr error
 		progressed := false
 		for _, f := range pending {
-			data, err := fs.ReadFile(seedDir, f.path)
-			if err != nil {
-				return count, fmt.Errorf("reading seed file %s: %w", f.path, err)
-			}
-			logger.Info(fmt.Sprintf("Applying seed data: seed/%s", f.path))
-			if err := applySeedJSON(db, f.path, f.table, data); err != nil {
+			if err := apply(f); err != nil {
 				if isForeignKeyViolation(err) {
 					retry = append(retry, f)
 					lastErr = err
@@ -164,7 +182,7 @@ func applySeedJSONTables(db *sqlx.DB, logger *zap.Logger, seedDir fs.FS, tables 
 			progressed = true
 		}
 		if !progressed {
-			return count, fmt.Errorf("could not resolve seed apply order (circular or missing foreign key target?): %w", lastErr)
+			return count, fmt.Errorf("could not resolve apply order (circular or missing foreign key target?): %w", lastErr)
 		}
 		pending = retry
 	}
