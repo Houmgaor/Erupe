@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Releases no longer attach `SCHEMA.sql`: it was only the `0001` baseline, without the later migrations, and the schema is embedded in the binary and applied automatically.
+
 ## [9.6.0] - 2026-09-27
 
 ### Added
