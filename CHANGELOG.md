@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Configurable RP accrual intervals (#12): `GameplayOptions.RPAccrualNormalSeconds` (default 1800) and `RPAccrualCafeSeconds` (default 900, NetCafe course) set how many seconds of play earn one RP at logout. The carried-over remainder is kept between sessions, RP is capped at `MaximumRP` before narrowing (the old addition could wrap), and non-integer or non-positive values are rejected at startup. A config built without `LoadConfig` falls back to the defaults rather than dividing by zero.
+
 ## [9.5.0] - 2026-09-19
 
 ### Added
