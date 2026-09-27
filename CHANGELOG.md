@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [9.6.0] - 2026-09-27
+
 ### Added
 
-- Configurable RP accrual intervals (#12): `GameplayOptions.RPAccrualNormalSeconds` (default 1800) and `RPAccrualCafeSeconds` (default 900, NetCafe course) set how many seconds of play earn one RP at logout. The carried-over remainder is kept between sessions, RP is capped at `MaximumRP` before narrowing (the old addition could wrap), and non-integer or non-positive values are rejected at startup. A config built without `LoadConfig` falls back to the defaults rather than dividing by zero.
+- Content files: an operator can keep game content (shop rows, exchange and prize lists, event quests, campaigns…) as `game-data/content/<table>/*.json` and Erupe synchronises the tables to them on every start and on `POST /v2/admin/content/reload` — no restart, no SQL. The format is the seed format, so copying `server/migrations/seed/shop_items/road.json` into the content directory is the starting point; a file declares a `key` (rows are updated in place, keeping their `id` and the purchase counters that reference it) and optionally a `scope` (rows it owns; unlisted ones are deleted). Each file is one transaction; a bad file is reported with its name and the server keeps running on what the database holds. Off unless the directory exists; `ContentPath` in the config overrides the location. Second step of #16.
+- JSON seed format alongside `server/migrations/seed/*.sql` (from Mezeporta/Erupe#205): plain tabular seeds are now `seed/<table>/*.json` — one directory per table, one object per row, a `comment` documenting every column — loaded by `server/migrations/seed_json.go`; `GachaDemo`, `DistributionDemo` and `TournamentDefaults` stay SQL. Verified row for row against the SQL they replace on a scratch database. The shipped files declare their natural `key` so they double as content-file templates.
+- Configurable RP accrual intervals (#12): `GameplayOptions.RPAccrualNormalSeconds` / `RPAccrualCafeSeconds` (defaults 1800 / 900 seconds of play per RP, carried remainder kept); RP is capped at `MaximumRP` without overflow.
+
+### Fixed
+
+- House theme no longer disappears (#21, #92): a renovated house with no theme record got `0xFFFF` parts and rendered invisible, and a theme change sent after a purchase in the same visit wiped the owned themes. The interior record is now merged instead of overwritten, with the default theme for an empty or stale record.
+- `seed/shop_items/road.json` carries the `0026` revert of item 9958 (Superior Ticket: cost 20, quantity 1, `road_fatalis` 999) — the JSON conversion predated it — and no longer lists five limited-tab rows twice (`item_id` 10750, 13508, 14705, 15027, 15028), which showed each item twice in game. Migration `0028` removes those copies from existing databases, keeping purchase counters.
 
 ## [9.5.0] - 2026-09-19
 

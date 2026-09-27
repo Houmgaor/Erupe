@@ -96,7 +96,8 @@ Each service takes repo interfaces + `*zap.Logger` in its constructor, making it
 
 PostgreSQL with embedded auto-migrating schema in `server/migrations/`:
 - `sql/0001_init.sql` — consolidated baseline
-- `seed/*.sql` — demo data (applied via `migrations.ApplySeedData()` on fresh DB)
+- `seed/*.sql` (procedural/subquery seed logic) / `seed/<table>/*.json` (plain tabular data, one directory per table — see `seed_json.go`) — demo data, applied via `migrations.ApplySeedData()` on fresh DB. The table name comes from the directory, never a field inside the file.
+- Content files (`content.go`): operator-owned copies of the JSON seeds in `<ContentPath>/<table>/*.json` (default `game-data/content/`), synchronised on every start and via `POST /v2/admin/content/reload` — upsert on the file's `key`, delete inside its `scope`. Nothing runs when the directory is absent. Content changes never go in `sql/`.
 - New migrations: `sql/0002_description.sql`, etc. (each runs in its own transaction)
 
 The server runs `migrations.Migrate()` automatically on startup.

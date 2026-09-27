@@ -771,3 +771,14 @@ func BenchmarkGetOutboundIP4(b *testing.B) {
 		_, _ = getOutboundIP4()
 	}
 }
+
+func TestResolvedContentPath(t *testing.T) {
+	cfg := &Config{BinPath: "/opt/erupe/game-data"}
+	if got := cfg.ResolvedContentPath(); got != filepath.Join("/opt/erupe/game-data", "content") {
+		t.Errorf("default = %q", got)
+	}
+	cfg.ContentPath = "/srv/content"
+	if got := cfg.ResolvedContentPath(); got != "/srv/content" {
+		t.Errorf("explicit = %q", got)
+	}
+}

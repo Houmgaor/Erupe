@@ -6,10 +6,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"erupe-ce/server/migrations"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -340,3 +344,51 @@ func TestAdminRepoErrorsAre500(t *testing.T) {
 var errMockAdminDB = errors.New("mock admin database error")
 
 func itoa(i int) string { return strconv.Itoa(i) }
+
+func TestAdminReloadContent(t *testing.T) {
+	s, _ := adminTestServer(t)
+
+	s.erupeConfig.ContentPath = filepath.Join(t.TempDir(), "missing")
+	rr := adminRequest(t, s, "POST", "/v2/admin/content/reload", nil)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("missing dir: status %d body %s", rr.Code, rr.Body.String())
+	}
+
+	// An existing directory with no files is a successful, empty reload.
+	s.erupeConfig.ContentPath = t.TempDir()
+	rr = adminRequest(t, s, "POST", "/v2/admin/content/reload", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("empty dir: status %d body %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Dir   string                     `json:"dir"`
+		Files []migrations.ContentResult `json:"files"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Dir != s.erupeConfig.ContentPath || len(resp.Files) != 0 {
+		t.Errorf("resp = %+v", resp)
+	}
+
+	// A malformed file is reported as the operator's error, with its name.
+	if err := os.MkdirAll(filepath.Join(s.erupeConfig.ContentPath, "shop_items"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.erupeConfig.ContentPath, "shop_items", "road.json"), []byte("{oops"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rr = adminRequest(t, s, "POST", "/v2/admin/content/reload", nil)
+	if rr.Code != http.StatusUnprocessableEntity || !strings.Contains(rr.Body.String(), "road.json") {
+		t.Fatalf("bad file: status %d body %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAdminReloadContent_RequiresOp(t *testing.T) {
+	s, _ := adminTestServer(t)
+	s.sessionRepo = &mockAPISessionRepo{userID: 2}
+	rr := adminRequest(t, s, "POST", "/v2/admin/content/reload", nil)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status %d, want 403", rr.Code)
+	}
+}
