@@ -110,6 +110,9 @@ func main() {
 
 	logger.Info(fmt.Sprintf("Starting Erupe (9.6.0-%s)", Commit()))
 	logger.Info(fmt.Sprintf("Client Mode: %s (%d)", config.ClientMode, config.RealClientMode))
+	for key, replacement := range cfg.DeprecatedKeys() {
+		logger.Warn(fmt.Sprintf("config.json: %s is deprecated and ignored; use %s instead", key, replacement))
+	}
 
 	if config.Database.Password == "" {
 		preventClose(config, "Database password is blank")

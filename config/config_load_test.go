@@ -758,3 +758,46 @@ func TestPatchTreeConfig(t *testing.T) {
 		})
 	}
 }
+
+// TestDeprecatedDisableSoftCrash: the retired key sets nothing and is
+// reported with its replacement, whatever its case in the file.
+func TestDeprecatedDisableSoftCrash(t *testing.T) {
+	for _, key := range []string{"DisableSoftCrash", "disablesoftcrash"} {
+		t.Run(key, func(t *testing.T) {
+			viper.Reset()
+			dir := t.TempDir()
+			origDir, _ := os.Getwd()
+			defer func() { _ = os.Chdir(origDir) }()
+			if err := os.Chdir(dir); err != nil {
+				t.Fatal(err)
+			}
+			writeMinimalConfig(t, dir, `{"Host": "127.0.0.1", "`+key+`": true}`)
+			c, err := LoadConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.DisableShutdownCountdown {
+				t.Error("DisableSoftCrash must not set DisableShutdownCountdown")
+			}
+			got := DeprecatedKeys()
+			if len(got) != 1 || got["DisableSoftCrash"] != "DisableShutdownCountdown" {
+				t.Errorf("DeprecatedKeys() = %v", got)
+			}
+		})
+	}
+	viper.Reset()
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	defer func() { _ = os.Chdir(origDir) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	writeMinimalConfig(t, dir, `{"Host": "127.0.0.1", "DisableShutdownCountdown": true}`)
+	c, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.DisableShutdownCountdown || len(DeprecatedKeys()) != 0 {
+		t.Errorf("DisableShutdownCountdown %v, deprecated %v", c.DisableShutdownCountdown, DeprecatedKeys())
+	}
+}

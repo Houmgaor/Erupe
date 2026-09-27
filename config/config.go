@@ -72,7 +72,7 @@ type Config struct {
 	BinPath                   string `mapstructure:"BinPath"`
 	ContentPath               string `mapstructure:"ContentPath"` // Directory of <table>/*.json content files synchronised into the database (see server/migrations/content.go); empty = <BinPath>/content
 	Language                  string
-	DisableShutdownCountdown  bool     `mapstructure:"DisableShutdownCountdown"` // Skip the in-game shutdown countdown (lets scripts restart the server unattended). Previously named DisableSoftCrash — legacy key still accepted.
+	DisableShutdownCountdown  bool     `mapstructure:"DisableShutdownCountdown"` // Skip the in-game shutdown countdown (lets scripts restart the server unattended). Replaces the deprecated DisableSoftCrash, which is ignored.
 	ShutdownCountdownSeconds  int      // Seconds to count down before shutting down (default 10; ignored when DisableShutdownCountdown is true)
 	ShutdownDrainSeconds      int      // Additional seconds to wait for sessions to disconnect naturally before force-closing (default 30)
 	HideLoginNotice           bool     // Hide the Erupe notice on login
@@ -457,10 +457,6 @@ func registerDefaults() {
 	viper.SetDefault("LoopDelay", 50)
 	viper.SetDefault("ShutdownCountdownSeconds", 10)
 	viper.SetDefault("ShutdownDrainSeconds", 30)
-	// Back-compat: old configs use DisableSoftCrash. RegisterAlias makes Viper
-	// treat reads/writes of the old key as the new key, so existing
-	// config.json files keep working without modification.
-	viper.RegisterAlias("DisableSoftCrash", "DisableShutdownCountdown")
 	viper.SetDefault("DefaultCourses", []uint16{1, 23, 24})
 	viper.SetDefault("EarthMonsters", []int32{0, 0, 0, 0})
 
@@ -641,6 +637,25 @@ func registerDefaults() {
 			},
 		},
 	})
+}
+
+// deprecatedKeys maps retired option names to the option that replaced
+// them. Erupe ignores them; DeprecatedKeys lets startup say so.
+var deprecatedKeys = map[string]string{
+	// Misleading name: it only ever skipped the shutdown countdown.
+	"DisableSoftCrash": "DisableShutdownCountdown",
+}
+
+// DeprecatedKeys returns the retired options the loaded config file still
+// sets, each mapped to the option to use instead. Call after LoadConfig.
+func DeprecatedKeys() map[string]string {
+	out := map[string]string{}
+	for key, replacement := range deprecatedKeys {
+		if viper.InConfig(key) {
+			out[key] = replacement
+		}
+	}
+	return out
 }
 
 // LoadConfig loads the given config toml file.
