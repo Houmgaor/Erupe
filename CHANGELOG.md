@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Config editor at `/admin`: operators edit `config.json` from the browser, every option described and validated, the previous file kept as `.bak`; `GET`/`PATCH /v2/admin/config`. Closes #10.
+- Startup warning for `config.json` keys Erupe ignores (misspelt options, or in the wrong section).
+
+### Deprecated
+
+- `DisableSoftCrash` (misleading name) is ignored, as it has been since 9.4.0; Erupe now warns about it at startup. Use `DisableShutdownCountdown`.
+
 ### Removed
 
 - Releases no longer attach `SCHEMA.sql`: it was only the `0001` baseline, without the later migrations, and the schema is embedded in the binary and applied automatically.
