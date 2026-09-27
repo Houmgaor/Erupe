@@ -182,8 +182,9 @@ const (
 //
 // 0xFFFF must never reach the client as an applied theme: `Lb_load_interior`
 // clamps a slot to 0 only when it is >= the table size, as a *signed* short,
-// so -1 passes through and indexes the entry before the table -- the house
-// geometry vanishes and only the NPCs and item box remain (issues #21, #92).
+// so -1 passes through and indexes the entry before the table -- on a fully
+// renovated house the geometry vanishes and only the NPCs and item box remain
+// (issues #21, #92; an unrenovated house ignores these slots).
 const interiorUnchangedSlot = 0xFFFF
 
 // defaultHouseInterior builds the interior record for a character who has
