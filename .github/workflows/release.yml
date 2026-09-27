@@ -121,9 +121,6 @@ jobs:
         path: artifacts
         pattern: '*-amd64'
 
-    - name: Copy standalone schema for download
-      run: cp server/migrations/sql/0001_init.sql SCHEMA.sql
-
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v3
       with:
@@ -140,4 +137,3 @@ jobs:
         files: |
           artifacts/Linux-amd64/erupe-Linux-amd64.zip
           artifacts/Windows-amd64/erupe-Windows-amd64.zip
-          SCHEMA.sql
