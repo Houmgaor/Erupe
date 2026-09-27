@@ -1,17 +1,17 @@
 -- Catch-up migration for databases with partially-applied patch schemas.
 --
--- The 0001_init.sql consolidation merged 33 incremental patches (00–32) into one
+-- The 0001_init.sql consolidation merged 33 incremental patches (00-32) into one
 -- baseline. detectExistingDB marks that baseline as applied for ANY existing database,
 -- but users who only ran some of the 33 patches will have schema gaps.
 --
 -- This migration is:
---   • A no-op on fresh databases (0001 already has everything)
---   • A no-op on fully-patched 9.2 databases
---   • A gap-filler for partially-patched databases
+--   * A no-op on fresh databases (0001 already has everything)
+--   * A no-op on fully-patched 9.2 databases
+--   * A gap-filler for partially-patched databases
 --
 -- Omitted patches:
---   15-reset-goocoos   — destructive data reset (NULLs all goocoo columns)
---   20-reset-warehouses — destructive data reset (NULLs all item_box columns)
+--   15-reset-goocoos   -- destructive data reset (NULLs all goocoo columns)
+--   20-reset-warehouses -- destructive data reset (NULLs all item_box columns)
 
 
 ------------------------------------------------------------------------
@@ -304,7 +304,7 @@ END $$;
 
 
 ------------------------------------------------------------------------
--- Patch 15: reset-goocoos — SKIPPED (destructive data reset)
+-- Patch 15: reset-goocoos -- SKIPPED (destructive data reset)
 ------------------------------------------------------------------------
 
 
@@ -367,7 +367,7 @@ END $$;
 
 
 ------------------------------------------------------------------------
--- Patch 20: reset-warehouses — SKIPPED (destructive data reset)
+-- Patch 20: reset-warehouses -- SKIPPED (destructive data reset)
 ------------------------------------------------------------------------
 
 
