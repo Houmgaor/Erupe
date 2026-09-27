@@ -1,7 +1,7 @@
 -- Revert 0024_fix_road_shop_item_9958.sql, which was based on a
 -- misidentification of the item.
 --
--- Item 9958 is スペリアチケット (Superior Ticket), a Road shop reward gated
+-- Item 9958 is the Superior Ticket, a Road shop reward gated
 -- behind a Fatalis kill count -- not a bulk consumable. Its seeded row
 -- (cost=20, quantity=1, road_fatalis=999) was correct: the nonzero
 -- road_fatalis is the gate the client renders as a kill requirement, not a

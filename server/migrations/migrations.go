@@ -26,6 +26,8 @@ func Migrate(db *sqlx.DB, logger *zap.Logger) (int, error) {
 		return 0, fmt.Errorf("creating schema_version table: %w", err)
 	}
 
+	warnNonUTF8(db, logger)
+
 	if err := detectExistingDB(db, logger); err != nil {
 		return 0, fmt.Errorf("detecting existing database: %w", err)
 	}
@@ -53,6 +55,21 @@ func Migrate(db *sqlx.DB, logger *zap.Logger) (int, error) {
 	}
 
 	return count, nil
+}
+
+// warnNonUTF8 logs a warning when the database was not created as UTF8.
+// PostgreSQL converts every statement to the database encoding before parsing
+// it, so a WIN1252 database rejects Japanese text anywhere, seeds and game
+// data included. Migrations are kept ASCII so they still apply, but the rest
+// will not.
+func warnNonUTF8(db *sqlx.DB, logger *zap.Logger) {
+	var encoding string
+	if err := db.Get(&encoding, "SHOW server_encoding"); err != nil || encoding == "UTF8" {
+		return
+	}
+	logger.Warn("Database encoding is not UTF8: Japanese text will fail to store. "+
+		"Recreate the database with ENCODING 'UTF8' TEMPLATE template0.",
+		zap.String("server_encoding", encoding))
 }
 
 // ApplySeedData runs all seed/*.sql files and seed/<table>/*.json files. Not

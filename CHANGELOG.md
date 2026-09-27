@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Releases no longer attach `SCHEMA.sql`: it was only the `0001` baseline, without the later migrations, and the schema is embedded in the binary and applied automatically.
 
+### Fixed
+
+- Migrations apply again on a database created as WIN1252 (#25): `0026` had katakana in a comment, which PostgreSQL rejects before running the statement, so the server would not start. Migration files are now plain ASCII, a test keeps them that way (the same failure came from an arrow in `0002` in #198), and startup warns when the database encoding is not UTF8, since Japanese seeds and game text cannot be stored there either.
+
 ## [9.6.0] - 2026-09-27
 
 ### Added
