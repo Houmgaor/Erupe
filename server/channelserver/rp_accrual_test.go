@@ -143,3 +143,48 @@ func TestRPAdditionDoesNotOverflow(t *testing.T) {
 		}
 	}
 }
+
+// TestRPAccrualZeroIntervalsUseDefaults: a Config not built by LoadConfig has
+// zero intervals; accrual must fall back to the original rates instead of
+// dividing by zero.
+func TestRPAccrualZeroIntervalsUseDefaults(t *testing.T) {
+	for _, options := range []cfg.GameplayOptions{
+		{},
+		{RPAccrualNormalSeconds: -5, RPAccrualCafeSeconds: -5},
+	} {
+		if gain, rem := accrueRP(3601, false, options); gain != 2 || rem != 1 {
+			t.Errorf("normal %+v: got %d,%d, want 2,1", options, gain, rem)
+		}
+		if gain, rem := accrueRP(1801, true, options); gain != 2 || rem != 1 {
+			t.Errorf("cafe %+v: got %d,%d, want 2,1", options, gain, rem)
+		}
+	}
+}
+
+// TestLogoutWithZeroRPIntervalsDoesNotPanic reproduces the logout path with a
+// zero-value GameplayOptions, as TestClientConnection_GracefulLoginLogout
+// builds it: the session must be saved with RP gained at the default rate.
+func TestLogoutWithZeroRPIntervalsDoesNotPanic(t *testing.T) {
+	server, charRepo, _, _ := setupLogoutServer()
+	server.erupeConfig.RealClientMode = cfg.ZZ
+	server.erupeConfig.GameplayOptions = cfg.GameplayOptions{MaximumRP: 50000}
+	charRepo.loadSaveDataData = make([]byte, 160000)
+	charRepo.ints["time_played"] = 1799
+	capture := &rpSaveCaptureRepo{mockCharacterRepo: charRepo}
+	server.charRepo = capture
+	session, _ := setupLogoutSession(42, server)
+	session.sessionStart = TimeAdjusted().Unix() - 1
+
+	logoutPlayer(session)
+
+	if capture.saved == nil {
+		t.Fatal("no savedata persisted")
+	}
+	raw, err := nullcomp.Decompress(capture.saved.CompSave)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rp := binary.LittleEndian.Uint16(raw[getPointers(cfg.ZZ)[pRP]:]); rp != 1 {
+		t.Errorf("RP = %d, want 1 (1799s carried + >=1s session at the 1800s default)", rp)
+	}
+}

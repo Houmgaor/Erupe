@@ -437,10 +437,24 @@ const (
 	killLogMonsterCount = 176 // monster table entries
 )
 
+// Default RP accrual rates (seconds per RP point), used when the configured
+// interval is not positive. LoadConfig rejects such values, but a Config built
+// any other way (tests, tools) must not divide by zero at logout.
+const (
+	defaultRPAccrualNormal = 1800 // 30 min per RP without cafe
+	defaultRPAccrualCafe   = 900  // 15 min per RP with cafe course
+)
+
 func accrueRP(seconds int, cafe bool, options cfg.GameplayOptions) (int, int) {
 	interval := options.RPAccrualNormalSeconds
+	if interval <= 0 {
+		interval = defaultRPAccrualNormal
+	}
 	if cafe {
 		interval = options.RPAccrualCafeSeconds
+		if interval <= 0 {
+			interval = defaultRPAccrualCafe
+		}
 	}
 	return seconds / interval, seconds % interval
 }
