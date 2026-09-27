@@ -108,7 +108,7 @@ func main() {
 		}
 	}
 
-	logger.Info(fmt.Sprintf("Starting Erupe (9.5.0-%s)", Commit()))
+	logger.Info(fmt.Sprintf("Starting Erupe (9.6.0-%s)", Commit()))
 	logger.Info(fmt.Sprintf("Client Mode: %s (%d)", config.ClientMode, config.RealClientMode))
 
 	if config.Database.Password == "" {
