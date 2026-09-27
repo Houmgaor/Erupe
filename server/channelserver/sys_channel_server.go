@@ -210,6 +210,14 @@ func NewServer(config *Config) *Server {
 }
 
 // Start starts the server in a new goroutine.
+// sessionCount returns the number of connected sessions, under the sessions
+// lock. Callers must not already hold Server.Mutex.
+func (s *Server) sessionCount() int {
+	s.Lock()
+	defer s.Unlock()
+	return len(s.sessions)
+}
+
 func (s *Server) Start() error {
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", s.Port))
 	if err != nil {
