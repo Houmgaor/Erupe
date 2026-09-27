@@ -92,7 +92,7 @@ func handleMsgSysLogin(s *Session, p mhfpacket.MHFPacket) {
 	bf := byteframe.NewByteFrame()
 	bf.WriteUint32(uint32(TimeAdjusted().Unix())) // Unix timestamp
 
-	err = s.server.sessionRepo.UpdatePlayerCount(s.server.ID, len(s.server.sessions))
+	err = s.server.sessionRepo.UpdatePlayerCount(s.server.ID, s.server.sessionCount())
 	if err != nil {
 		s.logger.Error("Failed to update current players", zap.Error(err))
 		doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
@@ -345,7 +345,7 @@ func logoutPlayer(s *Session) {
 			s.logger.Error("Failed to clear sign session", zap.Error(err))
 		}
 
-		if err := s.server.sessionRepo.UpdatePlayerCount(s.server.ID, len(s.server.sessions)); err != nil {
+		if err := s.server.sessionRepo.UpdatePlayerCount(s.server.ID, s.server.sessionCount()); err != nil {
 			s.logger.Error("Failed to update player count", zap.Error(err))
 		}
 	}
