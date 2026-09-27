@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Erupe Admin</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#1a1a2e;--panel:#16213e;--line:#0f3460;--text:#e0e0e0;--muted:#8a8fa3;--accent:#e94560;--ok:#4ecdc4;--warn:#f0a500}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:15px;line-height:1.45}
+a{color:var(--ok)}
+button{font:inherit;cursor:pointer;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--text);padding:.45rem .9rem}
+button:hover{border-color:var(--ok)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button.primary:disabled{opacity:.5;cursor:default}
+button.link{border:none;background:none;color:var(--ok);padding:0;font-size:.85rem;white-space:nowrap}
+input,select,textarea{font:inherit;color:var(--text);background:#0f1a33;border:1px solid var(--line);border-radius:6px;padding:.4rem .55rem;width:100%}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--ok);outline-offset:-1px}
+textarea{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85rem;min-height:5.5rem;resize:vertical}
+header{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;padding:1rem 1.5rem;border-bottom:1px solid var(--line);background:var(--panel)}
+header h1{font-size:1.25rem;color:var(--accent)}
+header .file{color:var(--muted);font-size:.85rem;font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-all}
+header .spacer{flex:1}
+.hidden{display:none!important}
+#login{max-width:360px;margin:12vh auto;background:var(--panel);padding:2rem;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.3)}
+#login h1{color:var(--accent);font-size:1.4rem;margin-bottom:.25rem}
+#login p{color:var(--muted);font-size:.9rem;margin-bottom:1.25rem}
+#login label{display:block;font-size:.85rem;color:var(--muted);margin:.75rem 0 .3rem}
+#login button{width:100%;margin-top:1.25rem}
+.error{color:var(--accent);font-size:.9rem;margin-top:.75rem}
+main{display:grid;grid-template-columns:200px 1fr;gap:1.5rem;max-width:1180px;margin:0 auto;padding:1.25rem 1.5rem 7rem}
+main>div{min-width:0}
+nav{position:sticky;top:1rem;align-self:start;display:flex;flex-direction:column;gap:.15rem}
+nav a{color:var(--muted);text-decoration:none;padding:.3rem .6rem;border-radius:6px;font-size:.9rem;display:flex;justify-content:space-between}
+nav a:hover{background:var(--panel);color:var(--text)}
+nav a .n{color:var(--accent);font-weight:600}
+.banner{overflow-wrap:anywhere;border-radius:8px;padding:.75rem 1rem;margin-bottom:.75rem;font-size:.9rem}
+.banner.bad{background:rgba(233,69,96,.15);border:1px solid var(--accent)}
+.banner.warn{background:rgba(240,165,0,.12);border:1px solid var(--warn)}
+.banner.good{background:rgba(78,205,196,.12);border:1px solid var(--ok)}
+.banner code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem}
+.tools{display:flex;gap:1rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem}
+.tools input[type=search]{flex:1;min-width:200px}
+.tools label{color:var(--muted);font-size:.85rem;display:flex;gap:.4rem;align-items:center}
+.tools input[type=checkbox]{width:auto}
+section{background:var(--panel);border-radius:10px;margin-bottom:1rem;box-shadow:0 4px 16px rgba(0,0,0,.25)}
+section>h2{font-size:1rem;color:var(--accent);padding:.9rem 1.1rem;cursor:pointer;display:flex;align-items:center;gap:.5rem;user-select:none}
+section>h2 .chev{color:var(--muted);transition:transform .15s;display:inline-block}
+section.collapsed>h2 .chev{transform:rotate(-90deg)}
+section.collapsed .rows{display:none}
+section>h2 .hint{color:var(--muted);font-weight:400;font-size:.8rem}
+.row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,300px);gap:1rem;padding:.8rem 1.1rem;border-top:1px solid rgba(15,52,96,.7)}
+.row.wide{grid-template-columns:minmax(0,1fr)}
+.row.dirty{background:rgba(78,205,196,.07);box-shadow:inset 3px 0 var(--ok)}
+.name{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9rem;word-break:break-all}
+.name .pre{color:var(--muted)}
+.badges{display:inline-flex;gap:.3rem;margin-left:.4rem;vertical-align:middle;flex-wrap:wrap}
+.badge{font-size:.7rem;padding:.05rem .4rem;border-radius:999px;border:1px solid var(--line);color:var(--muted);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.badge.set{color:var(--ok);border-color:var(--ok)}
+.badge.pending{color:var(--warn);border-color:var(--warn)}
+.desc{color:#b9bdd0;font-size:.88rem;margin-top:.2rem}
+.warnline{color:var(--warn);font-size:.83rem;margin-top:.25rem}
+.ctl{display:flex;flex-direction:column;gap:.3rem}
+.ctl .meta{display:flex;justify-content:space-between;gap:.5rem;font-size:.78rem;color:var(--muted)}
+.ctl .meta .def{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fielderr{color:var(--accent);font-size:.8rem}
+.switch{position:relative;display:inline-block;width:44px;height:24px}
+.switch input{opacity:0;width:0;height:0}
+.switch span{position:absolute;inset:0;background:#33395a;border-radius:24px;transition:.15s}
+.switch span:before{content:"";position:absolute;width:18px;height:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.15s}
+.switch input:checked+span{background:var(--ok)}
+.switch input:checked+span:before{transform:translateX(20px)}
+.switch input:focus-visible+span{outline:2px solid var(--ok)}
+#savebar{position:fixed;left:0;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--line);padding:.8rem 1.5rem;display:flex;gap:1rem;align-items:center;justify-content:flex-end;box-shadow:0 -4px 16px rgba(0,0,0,.3)}
+#savebar .count{flex:1;color:var(--muted)}
+#savebar .count b{color:var(--text)}
+.empty{color:var(--muted);font-style:italic;padding:1rem 1.1rem}
+@media (max-width:820px){main{grid-template-columns:1fr;padding:1rem 1rem 8rem}nav{display:none}.row{grid-template-columns:minmax(0,1fr)}header{padding:.8rem 1rem}}
+</style>
+</head>
+<body>
+
+<div id="login" class="hidden">
+  <h1>Erupe Admin</h1>
+  <p>Sign in with an operator account.</p>
+  <form id="login-form">
+    <label for="username">Username</label>
+    <input id="username" autocomplete="username" required>
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" required>
+    <button class="primary" type="submit">Sign in</button>
+    <div id="login-error" class="error"></div>
+  </form>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <h1>Erupe config</h1>
+    <span class="file" id="file"></span>
+    <span class="spacer"></span>
+    <a href="/dashboard">Dashboard</a>
+    <button class="link" id="logout">Sign out</button>
+  </header>
+  <main>
+    <nav id="nav"></nav>
+    <div>
+      <div id="banners"></div>
+      <div class="tools">
+        <input type="search" id="search" placeholder="Search options…" aria-label="Search options">
+        <label><input type="checkbox" id="only-set"> Set in the file</label>
+        <label><input type="checkbox" id="only-pending"> Waiting for restart</label>
+      </div>
+      <div id="sections"></div>
+    </div>
+  </main>
+  <div id="savebar" class="hidden">
+    <span class="count" id="count"></span>
+    <button id="discard">Discard</button>
+    <button class="primary" id="save">Save</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var GROUPS = [
+    ["General", "General"],
+    ["GameplayOptions", "Gameplay"],
+    ["Entrance", "Worlds"],
+    ["Commands", "Chat commands"],
+    ["Courses", "Courses"],
+    ["API", "Web API and launcher"],
+    ["Discord", "Discord"],
+    ["Sign", "Sign server"],
+    ["Channel", "Channel servers"],
+    ["Database", "Database"],
+    ["BinSync", "Quest data sync"],
+    ["SaveDumps", "Save copies"],
+    ["Screenshots", "Screenshots"],
+    ["Capture", "Packet capture"],
+    ["DebugOptions", "Debug"]
+  ];
+  var COLLAPSED = { Capture: true, DebugOptions: true };
+  var LONG_TEXT = { "API.LandingPage.Content": true };
+  var TOKEN_KEY = "erupe-admin-token";
+
+  var state = null;   // last GET /v2/admin/config payload
+  var edits = {};     // key -> {value: any} | {unset: true}
+  var errors = {};    // key -> message for invalid local input
+  var byKey = {};
+
+  function $(id) { return document.getElementById(id); }
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  function token() { try { return sessionStorage.getItem(TOKEN_KEY); } catch (e) { return null; } }
+  function setToken(t) { try { if (t) sessionStorage.setItem(TOKEN_KEY, t); else sessionStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+
+  function api(method, path, body) {
+    var opts = { method: method, headers: { "Authorization": "Bearer " + token() } };
+    if (body !== undefined) {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
+    return fetch(path, opts).then(function (r) {
+      return r.text().then(function (t) {
+        var data = null;
+        try { data = t ? JSON.parse(t) : null; } catch (e) {}
+        return { status: r.status, data: data };
+      });
+    });
+  }
+
+  // ── Sign-in ──────────────────────────────────────────────────────────
+  function showLogin(message) {
+    $("app").classList.add("hidden");
+    $("login").classList.remove("hidden");
+    $("login-error").textContent = message || "";
+  }
+
+  $("login-form").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    $("login-error").textContent = "";
+    fetch("/v2/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: $("username").value, password: $("password").value })
+    }).then(function (r) {
+      return r.json().then(function (d) { return { ok: r.ok, data: d }; });
+    }).then(function (res) {
+      if (!res.ok || !res.data.user) {
+        $("login-error").textContent = (res.data && res.data.message) || "Sign-in failed";
+        return;
+      }
+      setToken(res.data.user.token);
+      $("password").value = "";
+      load();
+    }).catch(function () { $("login-error").textContent = "The server did not answer"; });
+  });
+
+  $("logout").addEventListener("click", function () {
+    if (dirtyCount() && !window.confirm("Discard unsaved changes?")) return;
+    setToken(null);
+    edits = {};
+    showLogin("");
+  });
+
+  // ── Loading ──────────────────────────────────────────────────────────
+  function load(notice) {
+    if (!token()) { showLogin(""); return; }
+    api("GET", "/v2/admin/config").then(function (res) {
+      if (res.status === 401) { setToken(null); showLogin("Your session expired, sign in again."); return; }
+      if (res.status === 403) { setToken(null); showLogin("This account is not an operator."); return; }
+      if (res.status !== 200) { showLogin((res.data && res.data.message) || "Cannot load the config"); return; }
+      state = res.data;
+      byKey = {};
+      state.fields.forEach(function (f) { byKey[f.key] = f; });
+      $("login").classList.add("hidden");
+      $("app").classList.remove("hidden");
+      render(notice);
+    }).catch(function () { showLogin("The server did not answer"); });
+  }
+
+  // ── Values ───────────────────────────────────────────────────────────
+  function currentValue(f) {
+    var e = edits[f.key];
+    if (e) return e.unset ? f.default : e.value;
+    return f.value;
+  }
+  function display(f, v) {
+    if (v === undefined || v === null) return "";
+    if (f.kind === "list") return v.map(String).join("\n");
+    if (f.kind === "json") return JSON.stringify(v, null, 2);
+    return String(v);
+  }
+  function short(f, v) {
+    if (f.secret) return "";
+    if (v === undefined || v === null) return "none";
+    var s = f.kind === "list" || f.kind === "json" ? JSON.stringify(v) : String(v);
+    if (s === "") s = "empty";
+    return s.length > 60 ? s.slice(0, 57) + "…" : s;
+  }
+  function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+
+  // parse turns an input's text into the option's JSON value, or throws.
+  function parse(f, text) {
+    switch (f.kind) {
+      case "int":
+      case "number": {
+        if (text.trim() === "") throw new Error("A number is required");
+        var n = Number(text);
+        if (!isFinite(n)) throw new Error("Not a number");
+        if (f.kind === "int" && Math.floor(n) !== n) throw new Error("Must be a whole number");
+        if (f.min !== undefined && n < f.min) throw new Error("At least " + f.min);
+        if (f.max !== undefined && n > f.max) throw new Error("At most " + f.max);
+        return n;
+      }
+      case "list": {
+        var items = text.split("\n").filter(function (l) { return l.trim() !== ""; });
+        if (f.elem === "string") return items;
+        return items.map(function (l) {
+          var v = Number(l.trim());
+          if (!isFinite(v) || (f.elem === "int" && Math.floor(v) !== v)) throw new Error("\"" + l.trim() + "\" is not a number");
+          return v;
+        });
+      }
+      case "json":
+        try { return JSON.parse(text); } catch (e) { throw new Error("Invalid JSON: " + e.message); }
+      default:
+        return text;
+    }
+  }
+
+  function change(f, value) {
+    delete errors[f.key];
+    if (f.secret) {
+      if (value === "") delete edits[f.key]; else edits[f.key] = { value: value };
+    } else if (same(value, f.value)) {
+      delete edits[f.key];
+    } else {
+      edits[f.key] = { value: value };
+    }
+    refreshRow(f);
+    updateBar();
+  }
+
+  // ── Rendering ────────────────────────────────────────────────────────
+  var rowEls = {};
+
+  function render(notice) {
+    $("file").textContent = state.file;
+    renderBanners(notice);
+    var sections = $("sections");
+    var nav = $("nav");
+    sections.textContent = "";
+    nav.textContent = "";
+    rowEls = {};
+    var known = {};
+    GROUPS.forEach(function (g) { known[g[0]] = true; });
+    var groups = GROUPS.slice();
+    state.fields.forEach(function (f) {
+      if (!known[f.group]) { known[f.group] = true; groups.push([f.group, f.group]); }
+    });
+    groups.forEach(function (g) {
+      var fields = state.fields.filter(function (f) { return f.group === g[0]; });
+      if (!fields.length) return;
+      var sec = el("section");
+      sec.id = "s-" + g[0];
+      if (COLLAPSED[g[0]]) sec.classList.add("collapsed");
+      var h = el("h2");
+      h.appendChild(el("span", "chev", "▾"));
+      h.appendChild(document.createTextNode(g[1]));
+      if (COLLAPSED[g[0]]) h.appendChild(el("span", "hint", "for development and research"));
+      h.addEventListener("click", function () { sec.classList.toggle("collapsed"); });
+      sec.appendChild(h);
+      var rows = el("div", "rows");
+      fields.forEach(function (f) { rows.appendChild(buildRow(f)); });
+      sec.appendChild(rows);
+      sections.appendChild(sec);
+      var a = el("a");
+      a.href = "#s-" + g[0];
+      a.appendChild(el("span", "", g[1]));
+      a.appendChild(el("span", "n"));
+      a.dataset.group = g[0];
+      a.addEventListener("click", function () { sec.classList.remove("collapsed"); });
+      nav.appendChild(a);
+    });
+    applyFilter();
+    updateBar();
+  }
+
+  function renderBanners(notice) {
+    var b = $("banners");
+    b.textContent = "";
+    if (notice) b.appendChild(el("div", "banner good", notice));
+    if (!state.editable) {
+      b.appendChild(el("div", "banner warn", "This server loads its settings from " + state.file + ". Only a JSON config file can be edited here; the values below are read-only."));
+    }
+    if (state.fileError) {
+      b.appendChild(el("div", "banner bad", "The config file on disk no longer loads: " + state.fileError + ". Erupe will refuse to start until it is fixed."));
+    }
+    if (state.pending) {
+      var n = state.fields.filter(function (f) { return f.pending; }).length;
+      b.appendChild(el("div", "banner warn", n + (n === 1 ? " saved option waits" : " saved options wait") + " for a restart of Erupe to take effect."));
+    }
+    if (state.unknownKeys.length) {
+      var u = el("div", "banner warn");
+      u.appendChild(document.createTextNode("Erupe ignores these keys in the file, so the options they were meant for keep their default. Check them for typos or a wrong section: "));
+      state.unknownKeys.forEach(function (k, i) {
+        if (i) u.appendChild(document.createTextNode(", "));
+        u.appendChild(el("code", "", k));
+        if (state.replaced && state.replaced[k]) {
+          u.appendChild(document.createTextNode(" (deprecated, use "));
+          u.appendChild(el("code", "", state.replaced[k]));
+          u.appendChild(document.createTextNode(")"));
+        }
+      });
+      b.appendChild(u);
+    }
+  }
+
+  function buildRow(f) {
+    var wide = f.kind === "json" || LONG_TEXT[f.key] || (f.kind === "list" && f.elem === "string");
+    var row = el("div", "row" + (wide ? " wide" : ""));
+    var info = el("div");
+    var name = el("div", "name");
+    var dot = f.key.lastIndexOf(".");
+    if (dot >= 0) name.appendChild(el("span", "pre", f.key.slice(0, dot + 1)));
+    name.appendChild(el("strong", "", f.key.slice(dot + 1)));
+    var badges = el("span", "badges");
+    name.appendChild(badges);
+    info.appendChild(name);
+    info.appendChild(el("div", "desc", f.description));
+    if (f.warning) info.appendChild(el("div", "warnline", "⚠ " + f.warning));
+    row.appendChild(info);
+
+    var ctl = el("div", "ctl");
+    var input = buildInput(f);
+    ctl.appendChild(input.node);
+    var err = el("div", "fielderr");
+    ctl.appendChild(err);
+    var meta = el("div", "meta");
+    var def = el("span", "def");
+    meta.appendChild(def);
+    var reset = el("button", "link", "Reset to default");
+    reset.type = "button";
+    reset.addEventListener("click", function () {
+      delete errors[f.key];
+      if (f.set) edits[f.key] = { unset: true }; else delete edits[f.key];
+      input.set(f.secret ? "" : display(f, f.default));
+      refreshRow(f);
+      updateBar();
+    });
+    meta.appendChild(reset);
+    ctl.appendChild(meta);
+    row.appendChild(ctl);
+
+    rowEls[f.key] = { row: row, badges: badges, err: err, def: def, reset: reset, input: input };
+    refreshRow(f);
+    return row;
+  }
+
+  function buildInput(f) {
+    var ro = !state.editable;
+    var node, get, set;
+    if (f.kind === "bool") {
+      var label = el("label", "switch");
+      var cb = el("input");
+      cb.type = "checkbox";
+      cb.setAttribute("aria-label", f.key);
+      cb.disabled = ro;
+      label.appendChild(cb);
+      label.appendChild(el("span"));
+      cb.checked = !!f.value;
+      cb.addEventListener("change", function () { change(f, cb.checked); });
+      return { node: label, set: function (v) { cb.checked = v === "true"; } };
+    }
+    if (f.options && f.options.length) {
+      node = el("select");
+      f.options.forEach(function (o) { var opt = el("option", "", o); opt.value = o; node.appendChild(opt); });
+      node.value = f.value;
+    } else if (f.kind === "json" || f.kind === "list" || LONG_TEXT[f.key]) {
+      node = el("textarea");
+      node.value = display(f, f.value);
+      node.rows = Math.min(14, Math.max(3, node.value.split("\n").length + 1));
+      node.spellcheck = false;
+      if (!LONG_TEXT[f.key]) node.wrap = "off"; // one line is one list entry
+      if (f.kind === "list") node.placeholder = "One entry per line";
+    } else {
+      node = el("input");
+      if (f.secret) {
+        node.type = "password";
+        node.autocomplete = "new-password";
+        node.placeholder = f.set ? "set — type to replace" : "not set";
+      } else if (f.kind === "int" || f.kind === "number") {
+        node.type = "number";
+        node.step = f.kind === "int" ? "1" : "any";
+        if (f.min !== undefined) node.min = f.min;
+        if (f.max !== undefined) node.max = f.max;
+        node.value = display(f, f.value);
+      } else {
+        node.value = display(f, f.value);
+      }
+    }
+    node.setAttribute("aria-label", f.key);
+    node.disabled = ro;
+    node.addEventListener("input", function () {
+      if (f.secret) { change(f, node.value); return; }
+      try {
+        change(f, parse(f, node.value));
+      } catch (e) {
+        errors[f.key] = e.message;
+        edits[f.key] = { invalid: true };
+        refreshRow(f);
+        updateBar();
+      }
+    });
+    return { node: node, set: function (v) { node.value = v; } };
+  }
+
+  function refreshRow(f) {
+    var r = rowEls[f.key];
+    if (!r) return;
+    var e = edits[f.key];
+    r.row.classList.toggle("dirty", !!e);
+    r.badges.textContent = "";
+    var willBeSet = e ? !e.unset : f.set;
+    r.badges.appendChild(el("span", "badge" + (willBeSet ? " set" : ""), willBeSet ? "in file" : "default"));
+    if (f.pending) r.badges.appendChild(el("span", "badge pending", "restart needed"));
+    r.err.textContent = errors[f.key] || "";
+    r.def.textContent = f.secret ? "" : "Default: " + short(f, f.default);
+    r.def.title = f.secret ? "" : display(f, f.default);
+    r.reset.classList.toggle("hidden", !state.editable || !willBeSet);
+  }
+
+  // ── Filtering ────────────────────────────────────────────────────────
+  function applyFilter() {
+    var q = $("search").value.trim().toLowerCase();
+    var onlySet = $("only-set").checked;
+    var onlyPending = $("only-pending").checked;
+    document.querySelectorAll("section").forEach(function (sec) {
+      var shown = 0;
+      state.fields.forEach(function (f) {
+        if ("s-" + f.group !== sec.id) return;
+        var ok = (!q || f.key.toLowerCase().indexOf(q) >= 0 || f.description.toLowerCase().indexOf(q) >= 0) &&
+          (!onlySet || f.set) && (!onlyPending || f.pending);
+        rowEls[f.key].row.classList.toggle("hidden", !ok);
+        if (ok) shown++;
+      });
+      sec.classList.toggle("hidden", shown === 0);
+      if (q && shown) sec.classList.remove("collapsed");
+    });
+  }
+  ["search", "only-set", "only-pending"].forEach(function (id) {
+    $(id).addEventListener("input", applyFilter);
+    $(id).addEventListener("change", applyFilter);
+  });
+
+  // ── Saving ───────────────────────────────────────────────────────────
+  function dirtyCount() { return Object.keys(edits).length; }
+
+  function updateBar() {
+    var n = dirtyCount();
+    $("savebar").classList.toggle("hidden", n === 0);
+    var bad = Object.keys(errors).length;
+    $("count").textContent = "";
+    var b = el("b", "", n + (n === 1 ? " unsaved change" : " unsaved changes"));
+    $("count").appendChild(b);
+    if (bad) $("count").appendChild(document.createTextNode(" · " + bad + " to fix before saving"));
+    $("save").disabled = bad > 0;
+    document.querySelectorAll("nav a").forEach(function (a) {
+      var c = state.fields.filter(function (f) { return f.group === a.dataset.group && edits[f.key]; }).length;
+      a.lastChild.textContent = c ? c : "";
+    });
+  }
+
+  $("discard").addEventListener("click", function () {
+    edits = {};
+    errors = {};
+    render();
+  });
+
+  $("save").addEventListener("click", function () {
+    var body = { version: state.version, set: {}, unset: [] };
+    Object.keys(edits).forEach(function (k) {
+      if (edits[k].unset) body.unset.push(k); else body.set[k] = edits[k].value;
+    });
+    $("save").disabled = true;
+    api("PATCH", "/v2/admin/config", body).then(function (res) {
+      $("save").disabled = false;
+      if (res.status === 200) {
+        var n = dirtyCount();
+        edits = {};
+        errors = {};
+        state = res.data;
+        byKey = {};
+        state.fields.forEach(function (f) { byKey[f.key] = f; });
+        render("Saved " + n + (n === 1 ? " change" : " changes") + " to " + state.file +
+          " (the previous file is kept as " + state.file.split(/[\\/]/).pop() + ".bak). Restart Erupe to apply them.");
+        window.scrollTo(0, 0);
+        return;
+      }
+      if (res.status === 401) { setToken(null); showLogin("Your session expired, sign in again. Your changes were not saved."); return; }
+      var msg = (res.data && res.data.message) || ("Save failed (HTTP " + res.status + ")");
+      if (res.status === 409 && res.data && res.data.error === "config_changed") {
+        msg = "The file was changed by someone else since this page loaded. Reload the page to see it, then make your changes again.";
+      }
+      // Attach the error to its option when the message names one.
+      var key = msg.split(":")[0];
+      if (byKey[key]) {
+        errors[key] = msg.slice(key.length + 1).trim();
+        refreshRow(byKey[key]);
+        rowEls[key].row.scrollIntoView({ block: "center" });
+        updateBar();
+      } else {
+        $("banners").insertBefore(el("div", "banner bad", msg), $("banners").firstChild);
+        window.scrollTo(0, 0);
+      }
+    }).catch(function () {
+      $("save").disabled = false;
+      $("banners").insertBefore(el("div", "banner bad", "The server did not answer; nothing was saved."), $("banners").firstChild);
+    });
+  });
+
+  window.addEventListener("beforeunload", function (ev) {
+    if (dirtyCount()) { ev.preventDefault(); ev.returnValue = ""; }
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

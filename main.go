@@ -110,6 +110,17 @@ func main() {
 
 	logger.Info(fmt.Sprintf("Starting Erupe (9.6.0-%s)", Commit()))
 	logger.Info(fmt.Sprintf("Client Mode: %s (%d)", config.ClientMode, config.RealClientMode))
+	if strings.HasSuffix(config.FilePath, ".json") {
+		if unknown, err := cfg.UnknownKeys(config.FileData); err == nil && len(unknown) > 0 {
+			logger.Warn("config.json has keys Erupe does not recognise; they are ignored and the options they were meant for keep their defaults",
+				zap.Strings("keys", unknown))
+			for _, key := range unknown {
+				if r := cfg.Replacement(key); r != "" {
+					logger.Warn(fmt.Sprintf("config.json: %s is deprecated and ignored; use %s instead", key, r))
+				}
+			}
+		}
+	}
 
 	if config.Database.Password == "" {
 		preventClose(config, "Database password is blank")

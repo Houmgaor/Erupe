@@ -562,6 +562,68 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ContentReload" }
 
+  /v2/admin/config:
+    get:
+      summary: Read the config file as the editor shows it
+      description: |
+        Every option of the loaded config file (config.json) with its
+        description, value on disk, default, and whether a saved change
+        still waits for a restart. Secret options (database password, bot
+        token, CapLink key) carry no `value` or `default`. `unknownKeys`
+        lists keys Erupe ignores, such as misspelt options. The operator page
+        at `/admin` is built on this endpoint.
+      operationId: adminGetConfig
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The config file
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigState" }
+        "404": { description: The server was not started from a config file }
+    patch:
+      summary: Change options in the config file
+      description: |
+        Validates each value against its option (type, range, allowed
+        values), checks that the resulting file still loads, keeps the
+        previous file as `<file>.bak` and writes the new one. Keys the request
+        does not name keep their spelling, order and value. Changes apply at
+        the next restart. Every change is logged with the operator's ID
+        (secret values are not logged).
+      operationId: adminPatchConfig
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version:
+                  type: string
+                  description: The `version` from GET; the change is refused if the file changed since
+                set:
+                  type: object
+                  additionalProperties: true
+                  description: Option path (e.g. `GameplayOptions.MaximumRP`) to its new JSON value
+                  example: { "GameplayOptions.MaximumRP": 60000, "HideLoginNotice": false }
+                unset:
+                  type: array
+                  items: { type: string }
+                  description: Options to remove from the file, so they fall back to their default
+      responses:
+        "200":
+          description: Written; the new state of the file
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigState" }
+        "400": { description: Unknown option, invalid value, or nothing to change }
+        "404": { description: The server was not started from a config file }
+        "409": { description: The file changed since `version` (`config_changed`), or it is not JSON (`not_json`) }
+        "422": { description: The resulting file would not load }
+
   /mhf_file.php:
     get:
       summary: Game-file manifest or connectivity check (patch tree)
@@ -720,6 +782,37 @@ components:
         inserted: { type: integer }
         updated: { type: integer }
         deleted: { type: integer }
+    ConfigState:
+      type: object
+      properties:
+        file: { type: string, description: Path of the config file }
+        version: { type: string, description: SHA-256 of the file }
+        editable: { type: boolean, description: false for a non-JSON config file }
+        fileError: { type: string, description: Set when the file on disk no longer loads }
+        unknownKeys:
+          type: array
+          items: { type: string }
+          description: Keys Erupe ignores, e.g. `GameplayOptions.MaxRP`
+        pending: { type: boolean, description: Some saved change waits for a restart }
+        fields:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string, example: GameplayOptions.MaximumRP }
+              group: { type: string, example: GameplayOptions }
+              kind: { type: string, enum: [bool, int, number, string, list, json] }
+              elem: { type: string, description: Element kind of a list }
+              min: { type: number }
+              max: { type: number }
+              options: { type: array, items: { type: string } }
+              description: { type: string }
+              secret: { type: boolean }
+              warning: { type: string }
+              value: { description: Value in the file on disk (absent for secrets) }
+              default: { description: Value when the file does not set it (absent for secrets) }
+              set: { type: boolean, description: The file sets this option itself }
+              pending: { type: boolean, description: Saved but not yet loaded by the running server }
     ContentReload:
       type: object
       properties:

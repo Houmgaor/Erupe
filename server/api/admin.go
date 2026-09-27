@@ -72,6 +72,9 @@ func (s *APIServer) registerAdminRoutes(v2 *mux.Router) {
 	admin.HandleFunc("/events/{type}", s.AdminStopEvent).Methods("DELETE")
 
 	admin.HandleFunc("/content/reload", s.AdminReloadContent).Methods("POST")
+
+	admin.HandleFunc("/config", s.AdminGetConfig).Methods("GET")
+	admin.HandleFunc("/config", s.AdminPatchConfig).Methods("PATCH")
 }
 
 // audit logs a mutation with the operator who made it.

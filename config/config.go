@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"net"
@@ -72,7 +73,7 @@ type Config struct {
 	BinPath                   string `mapstructure:"BinPath"`
 	ContentPath               string `mapstructure:"ContentPath"` // Directory of <table>/*.json content files synchronised into the database (see server/migrations/content.go); empty = <BinPath>/content
 	Language                  string
-	DisableShutdownCountdown  bool     `mapstructure:"DisableShutdownCountdown"` // Skip the in-game shutdown countdown (lets scripts restart the server unattended). Previously named DisableSoftCrash — legacy key still accepted.
+	DisableShutdownCountdown  bool     `mapstructure:"DisableShutdownCountdown"` // Skip the in-game shutdown countdown (lets scripts restart the server unattended). Replaces the deprecated DisableSoftCrash, which is ignored.
 	ShutdownCountdownSeconds  int      // Seconds to count down before shutting down (default 10; ignored when DisableShutdownCountdown is true)
 	ShutdownDrainSeconds      int      // Additional seconds to wait for sessions to disconnect naturally before force-closing (default 30)
 	HideLoginNotice           bool     // Hide the Erupe notice on login
@@ -82,7 +83,7 @@ type Config struct {
 	DeleteOnSaveCorruption    bool     // Attempts to save corrupted data will flag the save for deletion
 	DisableSaveIntegrityCheck bool     // Skip SHA-256 hash verification on load (needed for cross-server save transfers)
 	ClientMode                string
-	RealClientMode            Mode
+	RealClientMode            Mode   `mapstructure:"-"` // Derived from ClientMode
 	QuestCacheExpiry          int    // Number of seconds to keep quest data cached
 	CommandPrefix             string // The prefix for commands
 	AutoCreateAccount         bool   // Automatically create accounts if they don't exist
@@ -106,6 +107,12 @@ type Config struct {
 	API             API
 	Channel         Channel
 	Entrance        Entrance
+
+	// The file LoadConfig read, and its contents at that time. The config
+	// editor compares them with the file on disk to tell which saved
+	// changes are still waiting for a restart.
+	FilePath string `mapstructure:"-"`
+	FileData []byte `mapstructure:"-"`
 }
 
 // DefaultBinPath is the directory new installs use for quest/scenario/road
@@ -441,37 +448,33 @@ func getOutboundIP4() (net.IP, error) {
 
 // registerDefaults sets all sane defaults via Viper so that a minimal
 // config.json (just database credentials) produces a fully working server.
-func registerDefaults() {
+func registerDefaults(v *viper.Viper) {
 	// Top-level settings
-	viper.SetDefault("Language", "jp")
-	viper.SetDefault("BinPath", "bin")
-	viper.SetDefault("ContentPath", "")
-	viper.SetDefault("HideLoginNotice", true)
-	viper.SetDefault("LoginNotices", []string{
+	v.SetDefault("Language", "jp")
+	v.SetDefault("BinPath", "bin")
+	v.SetDefault("ContentPath", "")
+	v.SetDefault("HideLoginNotice", true)
+	v.SetDefault("LoginNotices", []string{
 		"<BODY><CENTER><SIZE_3><C_4>Welcome to Erupe!",
 	})
-	viper.SetDefault("ClientMode", "ZZ")
-	viper.SetDefault("QuestCacheExpiry", 300)
-	viper.SetDefault("CommandPrefix", "!")
-	viper.SetDefault("AutoCreateAccount", true)
-	viper.SetDefault("LoopDelay", 50)
-	viper.SetDefault("ShutdownCountdownSeconds", 10)
-	viper.SetDefault("ShutdownDrainSeconds", 30)
-	// Back-compat: old configs use DisableSoftCrash. RegisterAlias makes Viper
-	// treat reads/writes of the old key as the new key, so existing
-	// config.json files keep working without modification.
-	viper.RegisterAlias("DisableSoftCrash", "DisableShutdownCountdown")
-	viper.SetDefault("DefaultCourses", []uint16{1, 23, 24})
-	viper.SetDefault("EarthMonsters", []int32{0, 0, 0, 0})
+	v.SetDefault("ClientMode", "ZZ")
+	v.SetDefault("QuestCacheExpiry", 300)
+	v.SetDefault("CommandPrefix", "!")
+	v.SetDefault("AutoCreateAccount", true)
+	v.SetDefault("LoopDelay", 50)
+	v.SetDefault("ShutdownCountdownSeconds", 10)
+	v.SetDefault("ShutdownDrainSeconds", 30)
+	v.SetDefault("DefaultCourses", []uint16{1, 23, 24})
+	v.SetDefault("EarthMonsters", []int32{0, 0, 0, 0})
 
 	// SaveDumps
-	viper.SetDefault("SaveDumps", SaveDumpOptions{
+	v.SetDefault("SaveDumps", SaveDumpOptions{
 		Enabled:   true,
 		OutputDir: "save-backups",
 	})
 
 	// Screenshots
-	viper.SetDefault("Screenshots", ScreenshotsOptions{
+	v.SetDefault("Screenshots", ScreenshotsOptions{
 		Enabled:       true,
 		Host:          "127.0.0.1",
 		Port:          8080,
@@ -480,7 +483,7 @@ func registerDefaults() {
 	})
 
 	// Capture
-	viper.SetDefault("Capture", CaptureOptions{
+	v.SetDefault("Capture", CaptureOptions{
 		OutputDir:       "captures",
 		CaptureSign:     true,
 		CaptureEntrance: true,
@@ -488,34 +491,34 @@ func registerDefaults() {
 	})
 
 	// DebugOptions (dot-notation for per-field merge)
-	viper.SetDefault("DebugOptions.MaxHexdumpLength", 256)
-	viper.SetDefault("DebugOptions.DivaOverride", -1)
-	viper.SetDefault("DebugOptions.FestaOverride", -1)
-	viper.SetDefault("DebugOptions.AutoQuestBackport", true)
-	viper.SetDefault("DebugOptions.CapLink", CapLinkOptions{
+	v.SetDefault("DebugOptions.MaxHexdumpLength", 256)
+	v.SetDefault("DebugOptions.DivaOverride", -1)
+	v.SetDefault("DebugOptions.FestaOverride", -1)
+	v.SetDefault("DebugOptions.AutoQuestBackport", true)
+	v.SetDefault("DebugOptions.CapLink", CapLinkOptions{
 		Values: []uint16{51728, 20000, 51729, 1, 20000},
 		Port:   80,
 	})
 
 	// GameplayOptions (dot-notation — critical to avoid zeroing multipliers)
-	viper.SetDefault("GameplayOptions.MaxFeatureWeapons", 1)
-	viper.SetDefault("GameplayOptions.MaximumNP", 100000)
-	viper.SetDefault("GameplayOptions.MaximumRP", uint16(50000))
-	viper.SetDefault("GameplayOptions.RPAccrualNormalSeconds", 1800)
-	viper.SetDefault("GameplayOptions.RPAccrualCafeSeconds", 900)
-	viper.SetDefault("GameplayOptions.MaximumFP", uint32(120000))
-	viper.SetDefault("GameplayOptions.TreasureHuntExpiry", uint32(604800))
-	viper.SetDefault("GameplayOptions.BoostTimeDuration", 7200)
-	viper.SetDefault("GameplayOptions.ClanMealDuration", 3600)
-	viper.SetDefault("GameplayOptions.ClanMemberLimits", [][]uint8{{0, 30}, {3, 40}, {7, 50}, {10, 60}})
-	viper.SetDefault("GameplayOptions.BonusQuestAllowance", uint32(3))
-	viper.SetDefault("GameplayOptions.DailyQuestAllowance", uint32(1))
-	viper.SetDefault("GameplayOptions.RegularRavienteMaxPlayers", uint8(8))
-	viper.SetDefault("GameplayOptions.ViolentRavienteMaxPlayers", uint8(8))
-	viper.SetDefault("GameplayOptions.BerserkRavienteMaxPlayers", uint8(32))
-	viper.SetDefault("GameplayOptions.ExtremeRavienteMaxPlayers", uint8(32))
-	viper.SetDefault("GameplayOptions.SmallBerserkRavienteMaxPlayers", uint8(8))
-	viper.SetDefault("GameplayOptions.GUrgentRate", float64(0.10))
+	v.SetDefault("GameplayOptions.MaxFeatureWeapons", 1)
+	v.SetDefault("GameplayOptions.MaximumNP", 100000)
+	v.SetDefault("GameplayOptions.MaximumRP", uint16(50000))
+	v.SetDefault("GameplayOptions.RPAccrualNormalSeconds", 1800)
+	v.SetDefault("GameplayOptions.RPAccrualCafeSeconds", 900)
+	v.SetDefault("GameplayOptions.MaximumFP", uint32(120000))
+	v.SetDefault("GameplayOptions.TreasureHuntExpiry", uint32(604800))
+	v.SetDefault("GameplayOptions.BoostTimeDuration", 7200)
+	v.SetDefault("GameplayOptions.ClanMealDuration", 3600)
+	v.SetDefault("GameplayOptions.ClanMemberLimits", [][]uint8{{0, 30}, {3, 40}, {7, 50}, {10, 60}})
+	v.SetDefault("GameplayOptions.BonusQuestAllowance", uint32(3))
+	v.SetDefault("GameplayOptions.DailyQuestAllowance", uint32(1))
+	v.SetDefault("GameplayOptions.RegularRavienteMaxPlayers", uint8(8))
+	v.SetDefault("GameplayOptions.ViolentRavienteMaxPlayers", uint8(8))
+	v.SetDefault("GameplayOptions.BerserkRavienteMaxPlayers", uint8(32))
+	v.SetDefault("GameplayOptions.ExtremeRavienteMaxPlayers", uint8(32))
+	v.SetDefault("GameplayOptions.SmallBerserkRavienteMaxPlayers", uint8(8))
+	v.SetDefault("GameplayOptions.GUrgentRate", float64(0.10))
 	// All reward multipliers default to 1.0 — without this, Go's zero value
 	// (0.0) would zero out all quest rewards for minimal configs.
 	for _, key := range []string{
@@ -525,26 +528,26 @@ func registerDefaults() {
 		"GZennyMultiplier", "GZennyMultiplierNC", "MaterialMultiplier", "MaterialMultiplierNC",
 		"GMaterialMultiplier", "GMaterialMultiplierNC",
 	} {
-		viper.SetDefault("GameplayOptions."+key, float64(1.0))
+		v.SetDefault("GameplayOptions."+key, float64(1.0))
 	}
-	viper.SetDefault("GameplayOptions.MezFesSoloTickets", uint32(5))
-	viper.SetDefault("GameplayOptions.MezFesGroupTickets", uint32(1))
-	viper.SetDefault("GameplayOptions.MezFesDuration", 172800)
+	v.SetDefault("GameplayOptions.MezFesSoloTickets", uint32(5))
+	v.SetDefault("GameplayOptions.MezFesGroupTickets", uint32(1))
+	v.SetDefault("GameplayOptions.MezFesDuration", 172800)
 
 	// Discord
-	viper.SetDefault("Discord.RelayChannel.MaxMessageLength", 183)
+	v.SetDefault("Discord.RelayChannel.MaxMessageLength", 183)
 
 	// API.PatchTree — dot-notation for the same reason as BinSync below.
-	viper.SetDefault("API.PatchTree.Enabled", false)
-	viper.SetDefault("API.PatchTree.Root", "patch")
+	v.SetDefault("API.PatchTree.Enabled", false)
+	v.SetDefault("API.PatchTree.Root", "patch")
 
 	// BinSync — dot-notation so a user setting only BinSync.Enabled doesn't
 	// zero out ManifestURL (same reasoning as DebugOptions/GameplayOptions).
-	viper.SetDefault("BinSync.Enabled", false)
-	viper.SetDefault("BinSync.ManifestURL", "")
+	v.SetDefault("BinSync.Enabled", false)
+	v.SetDefault("BinSync.ManifestURL", "")
 
 	// Commands (whole-struct default — replaced entirely if user provides any)
-	viper.SetDefault("Commands", []Command{
+	v.SetDefault("Commands", []Command{
 		{Name: "Help", Enabled: true, Description: "Show enabled chat commands", Prefix: "help"},
 		{Name: "Rights", Enabled: false, Description: "Overwrite the Rights value on your account", Prefix: "rights"},
 		{Name: "Raviente", Enabled: true, Description: "Various Raviente siege commands", Prefix: "ravi"},
@@ -561,7 +564,7 @@ func registerDefaults() {
 	})
 
 	// Courses
-	viper.SetDefault("Courses", []Course{
+	v.SetDefault("Courses", []Course{
 		{Name: "HunterLife", Enabled: true},
 		{Name: "Extra", Enabled: true},
 		{Name: "Premium", Enabled: true},
@@ -576,32 +579,32 @@ func registerDefaults() {
 	})
 
 	// Database (Password deliberately has no default)
-	viper.SetDefault("Database.Host", "localhost")
-	viper.SetDefault("Database.Port", 5432)
-	viper.SetDefault("Database.User", "postgres")
-	viper.SetDefault("Database.Database", "erupe")
+	v.SetDefault("Database.Host", "localhost")
+	v.SetDefault("Database.Port", 5432)
+	v.SetDefault("Database.User", "postgres")
+	v.SetDefault("Database.Database", "erupe")
 
 	// Sign server
-	viper.SetDefault("Sign.Enabled", true)
-	viper.SetDefault("Sign.Port", 53312)
+	v.SetDefault("Sign.Enabled", true)
+	v.SetDefault("Sign.Port", 53312)
 
 	// API server
-	viper.SetDefault("API.Enabled", true)
-	viper.SetDefault("API.Port", 8080)
-	viper.SetDefault("API.LandingPage", LandingPage{
+	v.SetDefault("API.Enabled", true)
+	v.SetDefault("API.Port", 8080)
+	v.SetDefault("API.LandingPage", LandingPage{
 		Enabled: true,
 		Title:   "My Frontier Server",
 		Content: "<p>Welcome! Server is running.</p>",
 	})
 
 	// Channel server
-	viper.SetDefault("Channel.Enabled", true)
+	v.SetDefault("Channel.Enabled", true)
 
 	// Entrance server
-	viper.SetDefault("Entrance.Enabled", true)
-	viper.SetDefault("Entrance.Port", uint16(53310))
+	v.SetDefault("Entrance.Enabled", true)
+	v.SetDefault("Entrance.Port", uint16(53310))
 	boolTrue := true
-	viper.SetDefault("Entrance.Entries", []EntranceServerInfo{
+	v.SetDefault("Entrance.Entries", []EntranceServerInfo{
 		{
 			Name: "Newbie", Type: 3, Recommended: 2,
 			Channels: []EntranceChannelInfo{
@@ -643,29 +646,24 @@ func registerDefaults() {
 	})
 }
 
-// LoadConfig loads the given config toml file.
+// LoadConfig loads config.{json,yaml,toml,…} from the working directory.
 func LoadConfig() (*Config, error) {
-	viper.SetConfigName("config")
-	viper.AddConfigPath(".")
+	v := viper.GetViper()
+	v.SetConfigName("config")
+	v.AddConfigPath(".")
 
-	registerDefaults()
+	registerDefaults(v)
 
-	err := viper.ReadInConfig()
+	if err := v.ReadInConfig(); err != nil {
+		return nil, err
+	}
+	c, err := decode(v)
 	if err != nil {
 		return nil, err
 	}
-
-	// Validate these new keys before weak decoding can truncate fractional values
-	// or coerce strings/bools. Keep decoding of existing options unchanged.
-	for _, key := range []string{"GameplayOptions.RPAccrualNormalSeconds", "GameplayOptions.RPAccrualCafeSeconds"} {
-		if err := validateRPAccrualSeconds(key, viper.Get(key)); err != nil {
-			return nil, err
-		}
-	}
-	c := &Config{}
-	err = viper.Unmarshal(c)
-	if err != nil {
-		return nil, err
+	c.FilePath = v.ConfigFileUsed()
+	if data, err := os.ReadFile(c.FilePath); err == nil {
+		c.FileData = data
 	}
 
 	if c.Host == "" {
@@ -681,6 +679,38 @@ func LoadConfig() (*Config, error) {
 	// proxy in front, or a separate patch server).
 	if c.API.PatchTree.Enabled && c.API.PatchServer == "" {
 		c.API.PatchServer = fmt.Sprintf("http://%s:%d", c.Host, c.API.Port)
+	}
+
+	return c, nil
+}
+
+// DecodeJSON decodes a config.json document the way LoadConfig decodes the
+// file on disk (defaults, validation, client mode), without touching the
+// global Viper instance or the network. The config editor uses it to check
+// a candidate file before writing it, and to read the values it holds.
+func DecodeJSON(data []byte) (*Config, error) {
+	v := viper.New()
+	v.SetConfigType("json")
+	registerDefaults(v)
+	if err := v.ReadConfig(bytes.NewReader(data)); err != nil {
+		return nil, err
+	}
+	return decode(v)
+}
+
+// decode unmarshals v into a Config and applies the rules that do not
+// depend on the machine: option validation and client mode resolution.
+func decode(v *viper.Viper) (*Config, error) {
+	// Validate these new keys before weak decoding can truncate fractional values
+	// or coerce strings/bools. Keep decoding of existing options unchanged.
+	for _, key := range []string{"GameplayOptions.RPAccrualNormalSeconds", "GameplayOptions.RPAccrualCafeSeconds"} {
+		if err := validateRPAccrualSeconds(key, v.Get(key)); err != nil {
+			return nil, err
+		}
+	}
+	c := &Config{}
+	if err := v.Unmarshal(c); err != nil {
+		return nil, err
 	}
 
 	for i := range versionStrings {

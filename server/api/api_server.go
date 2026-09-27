@@ -38,6 +38,7 @@ type APIServer struct {
 	httpServer     *http.Server
 	startTime      time.Time
 	isShuttingDown bool
+	configMu       sync.Mutex // serialises config editor reads and writes
 }
 
 // NewAPIServer creates a new Server type.
@@ -68,6 +69,7 @@ func (s *APIServer) Start() error {
 	// Dashboard routes (before catch-all)
 	r.HandleFunc("/dashboard", s.Dashboard)
 	r.HandleFunc("/api/dashboard/stats", s.DashboardStatsJSON).Methods("GET")
+	r.HandleFunc("/admin", s.AdminPage).Methods("GET")
 
 	// Legacy routes. The auth/mutation endpoints below decode a JSON request
 	// body, so they must be POST-only: without method enforcement, bare GET
