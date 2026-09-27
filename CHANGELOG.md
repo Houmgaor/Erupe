@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [9.6.1] - 2026-09-27
+
 ### Deprecated
 
 - `DisableSoftCrash` (misleading name) is ignored, as it has been since 9.4.0 despite that release's notes; Erupe now warns about it at startup. Use `DisableShutdownCountdown`.
