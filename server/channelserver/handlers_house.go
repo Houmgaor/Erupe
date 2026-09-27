@@ -17,11 +17,12 @@ import (
 func handleMsgMhfUpdateInterior(s *Session, p mhfpacket.MHFPacket) {
 	pkt := p.(*mhfpacket.MsgMhfUpdateInterior)
 
-	// This record is the only server-side copy of the applied-remodel bitfield
-	// (the house theme), so a partial write loses the theme on the next
-	// LoadHouse. Persist it only when it is exactly the record the client's
-	// parser round-trips (see interiorRecordSize); anything else is a bug
-	// upstream and must not overwrite good data.
+	// This record is the only server-side copy of the house theme (owned
+	// remodels plus the theme applied to each house part), so a partial write
+	// loses the theme on the next LoadHouse. Persist it only when it is
+	// exactly the record the client's parser round-trips (see
+	// interiorRecordSize); anything else is a bug upstream and must not
+	// overwrite good data.
 	if len(pkt.InteriorData) != interiorRecordSize {
 		s.logger.Warn("Refusing to store malformed interior record",
 			zap.Int("len", len(pkt.InteriorData)),
@@ -32,14 +33,26 @@ func handleMsgMhfUpdateInterior(s *Session, p mhfpacket.MHFPacket) {
 		return
 	}
 
-	if err := s.server.houseRepo.UpdateInterior(s.charID, pkt.InteriorData); err != nil {
+	// The client sends partial updates in the same 20 bytes (see
+	// mergeInteriorRecord), so the incoming record is applied on top of the
+	// stored one rather than replacing it.
+	_, _, stored, _, _, _, _, err := s.server.houseRepo.GetHouseContents(s.charID)
+	if err != nil {
+		s.logger.Error("Failed to read house interior before update", zap.Error(err), zap.Uint32("charID", s.charID))
+		doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
+		return
+	}
+	record := mergeInteriorRecord(stored, pkt.InteriorData)
+
+	if err := s.server.houseRepo.UpdateInterior(s.charID, record); err != nil {
 		s.logger.Error("Failed to update house interior", zap.Error(err), zap.Uint32("charID", s.charID))
 	} else {
-		// The remodel bitfield is the leading u32 of the record; log it so a
-		// theme that fails to persist is diagnosable without a packet capture.
+		// Log both sides so a theme that fails to persist is diagnosable
+		// without a packet capture.
 		s.logger.Info("Stored house interior",
 			zap.Uint32("charID", s.charID),
-			zap.Uint32("remodels", binary.BigEndian.Uint32(pkt.InteriorData[:4])),
+			zap.Binary("received", pkt.InteriorData),
+			zap.Binary("stored", record),
 		)
 	}
 	doAckSimpleSucceed(s, pkt.AckHandle, make([]byte, 4))
@@ -141,52 +154,96 @@ func handleMsgMhfUpdateHouse(s *Session, p mhfpacket.MHFPacket) {
 // MSG_MHF_LOAD_HOUSE Destination=9 response consumes and returns 0x14.
 const interiorRecordSize = 20
 
-// interiorEmptySlot is the "nothing installed in this slot" sentinel for the
-// interior record's six furniture slots.
+// The interior record is the house theme. Recovered from the Wii U build
+// (`MHF G Z2 v2064`, which ships real Capcom debug symbols -- see
+// ../../../tools/symbol-port for how that binary is used as ground truth):
 //
-// Recovered from the Wii U build (`MHF G Z2 v2064`, which ships real Capcom
-// debug symbols -- see ../../../tools/symbol-port for how that binary is used
-// as ground truth):
+//   - `snj_db_analyze_interior` reads it as one u32 followed by eight u16s
+//     (the last two read and discarded) and returns 0x14.
+//   - The u32 is the set of *owned* remodel themes: `lbb_remodel_check` tests
+//     theme n as `field & (1 << (n-1))` and treats theme 0 as always owned,
+//     and buying a theme (`lbb_remodel_set`) only ever ORs a bit in.
+//   - The six u16s are the theme applied to each of the house's six parts:
+//     `lbb_remodel_som_load_all2` and `Lb_myBookGetHouseParts` look up
+//     `remodel_table[slot*0x14 + part*2 + 8]` to pick that part's model.
+//     Theme 0 is the free default theme.
+//   - `putUpdate_interior` writes the u32, the six u16s, then two zero u16s.
+const (
+	interiorPartCount    = 6
+	interiorDefaultTheme = 0
+)
+
+// interiorUnchangedSlot is what the client puts in a part slot it is not
+// updating. `snj_db_set_houseinterior` takes a mask -- bit 1: owned themes
+// changed, bit 2: applied themes changed (`lbb_remodel_update_ck`) -- and
+// fills in 0 for the owned set and 0xFFFF for all six slots when the matching
+// bit is clear. MSG_MHF_UPDATE_INTERIOR carries no mask, so the server sees
+// these placeholders as values.
 //
-//   - `snj_db_analyze_interior(SNJ_MYHOUSE_INTERIOR*, const char*)` reads the
-//     record as one u32 followed by eight u16s (the last two are read and
-//     discarded) and returns 0x14, which is where interiorRecordSize above
-//     comes from.
-//   - The u32 is a bitfield of applied remodels, not an id:
-//     `lbb_remodel_check` tests it as `field & (1 << (n-1))`, so zero simply
-//     means "no remodels applied" and is a valid value for a new house.
-//   - `snj_db_set_houseinterior`, the client's *send* path, initialises its
-//     six u16 locals to 0xFFFF before filling in anything the caller supplied
-//     -- i.e. 0xFFFF is the client's own encoding for an unused slot.
-//   - `Lb_load_interior` reads each slot as a *signed* short and clamps it to
-//     0 only when it is >= the furniture table's entry count, so 0xFFFF (-1)
-//     is deliberately passed through unclamped, and `lbb_remodel_init` stores
-//     the same -1 sentinel in its own work struct.
-const interiorEmptySlot = 0xFFFF
+// 0xFFFF must never reach the client as an applied theme: `Lb_load_interior`
+// clamps a slot to 0 only when it is >= the table size, as a *signed* short,
+// so -1 passes through and indexes the entry before the table -- the house
+// geometry vanishes and only the NPCs and item box remain (issues #21, #92).
+const interiorUnchangedSlot = 0xFFFF
 
 // defaultHouseInterior builds the interior record for a character who has
-// never decorated: no remodels applied, every furniture slot empty.
+// never decorated: no themes bought, the default theme on every part.
 //
 // A never-decorated character has house_furniture=NULL, because the column is
 // only ever written by MSG_MHF_UPDATE_INTERIOR (handleMsgMhfUpdateInterior),
-// which the client only sends *from inside the house*. Erupe used to answer
-// Destination=9 with 20 zero bytes, which the ZZ client accepts and then
-// crashes on ~1s later (issue #192): a zero slot is furniture id 0, a real
-// table index, not an empty slot. bc52649f replaced that with a failed ACK to
-// stop the crash, which fixed the crash but left the house unreachable -- and
-// with the house unreachable there was no way to ever send an UpdateInterior,
-// so house_furniture could never become non-NULL. This record breaks that
-// deadlock by sending what the client itself would send for an empty house.
+// which the client only sends *from inside the house*.
 func defaultHouseInterior() []byte {
 	bf := byteframe.NewByteFrame()
-	bf.WriteUint32(0) // remodel bitfield: nothing applied
-	// Six furniture slots, plus the two trailing u16s the client's parser
-	// reads and discards -- same sentinel, so no field is ever a valid
-	// furniture index by accident.
-	for i := 0; i < 8; i++ {
-		bf.WriteUint16(interiorEmptySlot)
+	bf.WriteUint32(0) // owned themes: none beyond the always-owned default
+	for i := 0; i < interiorPartCount; i++ {
+		bf.WriteUint16(interiorDefaultTheme)
 	}
+	bf.WriteUint16(0) // the two trailing u16s, as putUpdate_interior writes them
+	bf.WriteUint16(0)
 	return bf.Data()
+}
+
+// mergeInteriorRecord applies an incoming MSG_MHF_UPDATE_INTERIOR record on
+// top of the stored one. Owned themes are OR-ed, because the client only ever
+// adds them and sends 0 when it is not updating them (so an overwrite would
+// forget every purchase). A part slot of interiorUnchangedSlot keeps the
+// stored theme. The result is always a clean record.
+func mergeInteriorRecord(stored, incoming []byte) []byte {
+	base := sanitizeInteriorRecord(stored)
+	in := byteframe.NewByteFrameFromBytes(incoming)
+	cur := byteframe.NewByteFrameFromBytes(base)
+
+	bf := byteframe.NewByteFrame()
+	bf.WriteUint32(cur.ReadUint32() | in.ReadUint32())
+	for i := 0; i < interiorPartCount; i++ {
+		slot, old := in.ReadUint16(), cur.ReadUint16()
+		if slot == interiorUnchangedSlot {
+			slot = old
+		}
+		bf.WriteUint16(slot)
+	}
+	bf.WriteUint16(0)
+	bf.WriteUint16(0)
+	return bf.Data()
+}
+
+// sanitizeInteriorRecord returns a record safe to send to the client: the
+// default record when none is stored (or it is malformed), otherwise the
+// stored one with any interiorUnchangedSlot placeholder -- written by Erupe
+// versions that stored partial updates verbatim -- reset to the default theme.
+func sanitizeInteriorRecord(record []byte) []byte {
+	if len(record) != interiorRecordSize {
+		return defaultHouseInterior()
+	}
+	out := make([]byte, interiorRecordSize)
+	copy(out, record)
+	for i := 0; i < interiorPartCount; i++ {
+		off := 4 + i*2
+		if binary.BigEndian.Uint16(out[off:]) == interiorUnchangedSlot {
+			binary.BigEndian.PutUint16(out[off:], interiorDefaultTheme)
+		}
+	}
+	return out
 }
 
 func handleMsgMhfLoadHouse(s *Session, p mhfpacket.MHFPacket) {
@@ -252,9 +309,7 @@ func handleMsgMhfLoadHouse(s *Session, p mhfpacket.MHFPacket) {
 		doAckSimpleFail(s, pkt.AckHandle, make([]byte, 4))
 		return
 	}
-	if len(houseFurniture) == 0 {
-		houseFurniture = defaultHouseInterior()
-	}
+	houseFurniture = sanitizeInteriorRecord(houseFurniture)
 
 	switch pkt.Destination {
 	case 3: // Others house

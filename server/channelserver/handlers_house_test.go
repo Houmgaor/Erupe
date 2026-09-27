@@ -223,13 +223,12 @@ func TestOperateWarehouse_RenameBoxIndexTooHigh(t *testing.T) {
 func TestUpdateInterior_SavesData(t *testing.T) {
 	_, _, session, charID := setupHouseTest(t)
 
-	// A real record is always exactly interiorRecordSize bytes: the leading u32
-	// is the applied-remodel bitfield (the house theme), followed by the
-	// furniture slots. MsgMhfUpdateInterior.Parse reads exactly this many.
+	// A full update (both mask bits set): owned themes, then the theme
+	// applied to each of the six parts, then two zero u16s.
 	interiorData := []byte{
-		0x00, 0x00, 0x00, 0xBE, // remodel bitfield
-		0xFF, 0xFF, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04, 0x00, 0x05, 0xFF, 0xFF,
-		0xFF, 0xFF, 0xFF, 0xFF,
+		0x00, 0x00, 0x00, 0xBE, // owned themes
+		0x00, 0x02, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04, 0x00, 0x05, 0x00, 0x06,
+		0x00, 0x00, 0x00, 0x00,
 	}
 	if len(interiorData) != interiorRecordSize {
 		t.Fatalf("fixture must be %d bytes, got %d", interiorRecordSize, len(interiorData))
@@ -356,20 +355,16 @@ func TestLoadHouse_OwnHouse_Destination9(t *testing.T) {
 	}
 }
 
-// TestLoadHouse_OwnHouse_NilFurniture_SendsEmptyInterior covers issue #192's
-// second half. A never-decorated character has house_furniture=NULL, and the
-// 20 zero bytes Erupe used to send for that case crash the ZZ client ~1s
-// later, because a zero furniture slot is a real table index rather than an
-// empty slot. bc52649f stopped the crash with a failed ACK, which left the
-// house unreachable -- and since house_furniture is only ever written from
-// inside the house, unreachable meant permanently NULL.
+// TestLoadHouse_OwnHouse_NilFurniture_SendsDefaultInterior: a never-decorated
+// character has house_furniture=NULL (the column is only written from inside
+// the house), so the handler must answer with a usable record rather than a
+// failed ACK, which left the house unreachable (bc52649f).
 //
-// The handler must now answer with the empty-interior record the client itself
-// uses (see defaultHouseInterior for the Wii U symbols this was read off).
-func TestLoadHouse_OwnHouse_NilFurniture_SendsEmptyInterior(t *testing.T) {
+// The record is the default theme on every part. The previous answer, 0xFFFF
+// slots, loaded the stage but the client indexes its remodel table with them
+// as -1, so the house geometry was invisible (#21).
+func TestLoadHouse_OwnHouse_NilFurniture_SendsDefaultInterior(t *testing.T) {
 	_, _, session, charID := setupHouseTest(t)
-	// No UpdateInterior call: house_furniture stays NULL, as for any
-	// never-decorated character.
 
 	pkt := &mhfpacket.MsgMhfLoadHouse{
 		AckHandle:   14,
@@ -380,40 +375,134 @@ func TestLoadHouse_OwnHouse_NilFurniture_SendsEmptyInterior(t *testing.T) {
 
 	ack := readAck(t, session)
 	if ack.ErrorCode != 0 {
-		t.Fatalf("expected success for nil house_furniture, got error code %d "+
-			"(a failed ACK here is what left the house unreachable)", ack.ErrorCode)
+		t.Fatalf("expected success for nil house_furniture, got error code %d", ack.ErrorCode)
 	}
-	if !ack.IsBufferResponse {
-		t.Fatal("expected buffer response")
-	}
-	want := []byte{
-		0x00, 0x00, 0x00, 0x00, // remodel bitfield: nothing applied
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // six empty furniture slots
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		0xFF, 0xFF, 0xFF, 0xFF, // the two u16s the client reads and discards
-	}
-	if !bytes.Equal(ack.Payload, want) {
-		t.Errorf("empty interior payload = % x, want % x", ack.Payload, want)
+	if !bytes.Equal(ack.Payload, defaultHouseInterior()) {
+		t.Errorf("payload = % x, want % x", ack.Payload, defaultHouseInterior())
 	}
 }
 
 // TestDefaultHouseInterior_Layout pins the record's shape independently of the
-// handler: exactly 20 bytes, because that is what the client's parser consumes
-// (snj_db_analyze_interior returns 0x14), and no zero-valued furniture slot,
-// because zero is a valid furniture index and is what crashed the client.
+// handler: exactly 20 bytes (snj_db_analyze_interior returns 0x14), nothing
+// owned, default theme on all six parts, two zero trailing u16s.
 func TestDefaultHouseInterior_Layout(t *testing.T) {
 	got := defaultHouseInterior()
-	if len(got) != interiorRecordSize {
-		t.Fatalf("len = %d, want %d", len(got), interiorRecordSize)
+	want := make([]byte, interiorRecordSize)
+	if !bytes.Equal(got, want) {
+		t.Errorf("defaultHouseInterior() = % x, want % x", got, want)
 	}
-	bf := byteframe.NewByteFrameFromBytes(got)
-	if remodels := bf.ReadUint32(); remodels != 0 {
-		t.Errorf("remodel bitfield = %#x, want 0", remodels)
+}
+
+// interiorRecord builds a 20-byte record for the merge tests.
+func interiorRecord(owned uint32, slots [6]uint16) []byte {
+	bf := byteframe.NewByteFrame()
+	bf.WriteUint32(owned)
+	for _, v := range slots {
+		bf.WriteUint16(v)
 	}
-	for i := 0; i < 8; i++ {
-		if slot := bf.ReadUint16(); slot != interiorEmptySlot {
-			t.Errorf("slot %d = %#x, want %#x", i, slot, interiorEmptySlot)
+	bf.WriteUint16(0)
+	bf.WriteUint16(0)
+	return bf.Data()
+}
+
+const keep = interiorUnchangedSlot
+
+func TestMergeInteriorRecord(t *testing.T) {
+	stored := interiorRecord(0b1010, [6]uint16{2, 2, 4, 4, 0, 0})
+	tests := []struct {
+		name     string
+		stored   []byte
+		incoming []byte
+		want     []byte
+	}{
+		{
+			// Mask 2: applying an owned theme. The client sends 0 for the
+			// owned set; overwriting it forgot every purchase (#92).
+			name:     "slots only keeps owned themes",
+			stored:   stored,
+			incoming: interiorRecord(0, [6]uint16{4, 4, 4, 4, 4, 4}),
+			want:     interiorRecord(0b1010, [6]uint16{4, 4, 4, 4, 4, 4}),
+		},
+		{
+			// Mask 1: owned set changed, slots sent as 0xFFFF. Storing them
+			// made the house invisible on the next load (#21).
+			name:     "owned only keeps applied themes",
+			stored:   stored,
+			incoming: interiorRecord(0b1011, [6]uint16{keep, keep, keep, keep, keep, keep}),
+			want:     interiorRecord(0b1011, [6]uint16{2, 2, 4, 4, 0, 0}),
+		},
+		{
+			name:     "full update",
+			stored:   stored,
+			incoming: interiorRecord(0b1110, [6]uint16{3, 3, 3, 1, 1, 1}),
+			want:     interiorRecord(0b1110, [6]uint16{3, 3, 3, 1, 1, 1}),
+		},
+		{
+			name:     "nothing stored",
+			stored:   nil,
+			incoming: interiorRecord(0b1, [6]uint16{keep, 1, keep, 1, keep, 1}),
+			want:     interiorRecord(0b1, [6]uint16{0, 1, 0, 1, 0, 1}),
+		},
+		{
+			name:     "stored placeholder is repaired",
+			stored:   interiorRecord(0b1, [6]uint16{keep, keep, keep, keep, keep, keep}),
+			incoming: interiorRecord(0, [6]uint16{keep, 1, keep, keep, keep, keep}),
+			want:     interiorRecord(0b1, [6]uint16{0, 1, 0, 0, 0, 0}),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := mergeInteriorRecord(tc.stored, tc.incoming); !bytes.Equal(got, tc.want) {
+				t.Errorf("got % x, want % x", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestUpdateInterior_PartialUpdatesKeepTheme replays the client's two partial
+// update shapes against the database, in the order a player produces them:
+// buy and apply a theme, re-apply it from the house book (mask 2), then a
+// purchase that leaves the applied themes alone (mask 1).
+func TestUpdateInterior_PartialUpdatesKeepTheme(t *testing.T) {
+	_, _, session, charID := setupHouseTest(t)
+	send := func(rec []byte) {
+		t.Helper()
+		handleMsgMhfUpdateInterior(session, &mhfpacket.MsgMhfUpdateInterior{AckHandle: 1, InteriorData: rec})
+		if ack := readAck(t, session); ack.ErrorCode != 0 {
+			t.Fatalf("ack error %d", ack.ErrorCode)
 		}
+	}
+	stored := func() []byte {
+		t.Helper()
+		_, _, f, _, _, _, _, err := session.server.houseRepo.GetHouseContents(charID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+
+	send(interiorRecord(0b100, [6]uint16{3, 3, 3, 3, 3, 3}))
+	send(interiorRecord(0, [6]uint16{3, 3, 3, 0, 0, 0}))
+	if got, want := stored(), interiorRecord(0b100, [6]uint16{3, 3, 3, 0, 0, 0}); !bytes.Equal(got, want) {
+		t.Fatalf("after slots-only update: % x, want % x", got, want)
+	}
+	send(interiorRecord(0b110, [6]uint16{keep, keep, keep, keep, keep, keep}))
+	if got, want := stored(), interiorRecord(0b110, [6]uint16{3, 3, 3, 0, 0, 0}); !bytes.Equal(got, want) {
+		t.Fatalf("after owned-only update: % x, want % x", got, want)
+	}
+}
+
+// TestLoadHouse_RepairsStoredPlaceholders: rows written by earlier versions
+// can hold 0xFFFF slots; they must load as the default theme, not as -1.
+func TestLoadHouse_RepairsStoredPlaceholders(t *testing.T) {
+	_, _, session, charID := setupHouseTest(t)
+	_ = session.server.houseRepo.UpdateInterior(charID,
+		interiorRecord(0b1, [6]uint16{keep, 1, keep, keep, keep, keep}))
+
+	handleMsgMhfLoadHouse(session, &mhfpacket.MsgMhfLoadHouse{AckHandle: 1, CharID: charID, Destination: 9})
+	ack := readAck(t, session)
+	if want := interiorRecord(0b1, [6]uint16{0, 1, 0, 0, 0, 0}); !bytes.Equal(ack.Payload, want) {
+		t.Errorf("payload = % x, want % x", ack.Payload, want)
 	}
 }
 
