@@ -9,855 +9,691 @@ import (
 	"golang.org/x/text/transform"
 )
 
-// ParseQuestBinary reads a MHF quest binary (ZZ/G10 layout, little-endian)
-// and returns a QuestJSON ready for re-compilation with CompileQuestJSON.
-//
-// The binary layout is described in quest_json.go (CompileQuestJSON).
-// Sections guarded by null pointers in the header are skipped; the
-// corresponding QuestJSON slices will be nil/empty.
-func ParseQuestBinary(data []byte) (*QuestJSON, error) {
-	if len(data) < 0x86 {
-		return nil, fmt.Errorf("quest binary too short: %d bytes (minimum 0x86)", len(data))
-	}
+// questReader reads a quest binary with bounds checks. The first
+// out-of-range read records an error and returns zero; callers check err
+// once per section.
+type questReader struct {
+	d   []byte
+	err error
+}
 
-	// ── Helper closures ──────────────────────────────────────────────────
-	u8 := func(off int) uint8 {
-		return data[off]
+func (r *questReader) ok(off, n int, what string) bool {
+	if r.err != nil {
+		return false
 	}
-	u16 := func(off int) uint16 {
-		return binary.LittleEndian.Uint16(data[off:])
+	if off < 0 || n < 0 || off+n > len(r.d) {
+		r.err = fmt.Errorf("%s: offset 0x%X len %d out of bounds (file len %d)", what, off, n, len(r.d))
+		return false
 	}
-	i16 := func(off int) int16 {
-		return int16(binary.LittleEndian.Uint16(data[off:]))
-	}
-	u32 := func(off int) uint32 {
-		return binary.LittleEndian.Uint32(data[off:])
-	}
-	f32 := func(off int) float32 {
-		return math.Float32frombits(binary.LittleEndian.Uint32(data[off:]))
-	}
+	return true
+}
 
-	// check bounds-checks a read of n bytes at off.
-	check := func(off, n int, ctx string) error {
-		if off < 0 || off+n > len(data) {
-			return fmt.Errorf("%s: offset 0x%X len %d out of bounds (file len %d)", ctx, off, n, len(data))
-		}
+func (r *questReader) u8(off int) uint8 {
+	if !r.ok(off, 1, "u8") {
+		return 0
+	}
+	return r.d[off]
+}
+
+func (r *questReader) u16(off int) uint16 {
+	if !r.ok(off, 2, "u16") {
+		return 0
+	}
+	return binary.LittleEndian.Uint16(r.d[off:])
+}
+
+func (r *questReader) i16(off int) int16 { return int16(r.u16(off)) }
+
+func (r *questReader) u32(off int) uint32 {
+	if !r.ok(off, 4, "u32") {
+		return 0
+	}
+	return binary.LittleEndian.Uint32(r.d[off:])
+}
+
+func (r *questReader) i32(off int) int32   { return int32(r.u32(off)) }
+func (r *questReader) f32(off int) float32 { return math.Float32frombits(r.u32(off)) }
+
+func (r *questReader) bytes(off, n int) []byte {
+	if !r.ok(off, n, "bytes") {
 		return nil
 	}
+	return r.d[off : off+n]
+}
 
-	// readSJIS reads a null-terminated Shift-JIS string starting at off.
-	readSJIS := func(off int) (string, error) {
-		if off < 0 || off >= len(data) {
-			return "", fmt.Errorf("string offset 0x%X out of bounds", off)
-		}
-		end := off
-		for end < len(data) && data[end] != 0 {
-			end++
-		}
-		sjis := data[off:end]
-		if len(sjis) == 0 {
-			return "", nil
-		}
-		dec := japanese.ShiftJIS.NewDecoder()
-		utf8, _, err := transform.Bytes(dec, sjis)
-		if err != nil {
-			return "", fmt.Errorf("shift-jis decode at 0x%X: %w", off, err)
-		}
-		return string(utf8), nil
+// sjis reads a null-terminated Shift-JIS string.
+func (r *questReader) sjis(off int) (string, error) {
+	if off < 0 || off >= len(r.d) {
+		return "", fmt.Errorf("string offset 0x%X out of bounds", off)
 	}
+	end := off
+	for end < len(r.d) && r.d[end] != 0 {
+		end++
+	}
+	if end == off {
+		return "", nil
+	}
+	utf8, _, err := transform.Bytes(japanese.ShiftJIS.NewDecoder(), r.d[off:end])
+	if err != nil {
+		return "", fmt.Errorf("shift-jis decode at 0x%X: %w", off, err)
+	}
+	return string(utf8), nil
+}
 
+// maxQuestListLen bounds terminator-ended lists, so a corrupt file fails
+// instead of looping.
+const maxQuestListLen = 4096
+
+// ParseQuestBinary reads a MHF quest binary (ZZ, little-endian,
+// uncompressed) into a QuestJSON that CompileQuestJSON turns back into an
+// equivalent file. It walks the sections the way the client does (see
+// quest_json_ext.go): list lengths come from the header counts and each
+// list ends where the client stops reading.
+func ParseQuestBinary(data []byte) (*QuestJSON, error) {
+	if len(data) < questHeaderSize {
+		return nil, fmt.Errorf("quest binary too short: %d bytes (minimum 0x%X)", len(data), questHeaderSize)
+	}
+	r := &questReader{d: data}
 	q := &QuestJSON{}
 
-	// ── Header (0x00–0x43) ───────────────────────────────────────────────
-	questTypeFlagsPtr := int(u32(0x00))
-	loadedStagesPtr := int(u32(0x04))
-	supplyBoxPtr := int(u32(0x08))
-	rewardPtr := int(u32(0x0C))
-	questAreaPtr := int(u32(0x14))
-	largeMonsterPtr := int(u32(0x18))
-	areaTransitionsPtr := int(u32(0x1C))
-	areaMappingPtr := int(u32(0x20))
-	mapInfoPtr := int(u32(0x24))
-	gatheringPointsPtr := int(u32(0x28))
-	areaFacilitiesPtr := int(u32(0x2C))
-	someStringsPtr := int(u32(0x30))
-	unk34Ptr := int(u32(0x34)) // stages-end sentinel
-	gatheringTablesPtr := int(u32(0x38))
-
-	// ── General Quest Properties (0x44–0x85) ────────────────────────────
-	q.MonsterSizeMulti = u16(0x44)
-	q.SizeRange = u16(0x46)
-	q.StatTable1 = u32(0x48)
-	q.MainRankPoints = u32(0x4C)
-	// 0x50 unknown u32 — skipped
-	q.SubARankPoints = u32(0x54)
-	q.SubBRankPoints = u32(0x58)
-	// 0x5C questTypeID/unknown — skipped
-	// 0x60 padding
-	q.StatTable2 = u8(0x61)
-	// 0x62–0x72 padding
-	// 0x73 questKn1, 0x74 questKn2, 0x76 questKn3 — skipped
-	gatheringTablesQty := int(u16(0x78))
-	// 0x7A unknown
-	area1Zones := int(u8(0x7C))
-	// 0x7D–0x7F area2–4Zones (not needed for parsing)
-
-	// ── Main Quest Properties (at questTypeFlagsPtr, 320 bytes) ─────────
-	if questTypeFlagsPtr == 0 {
+	mainPtr := int(r.u32(0x00))
+	if mainPtr == 0 {
 		return nil, fmt.Errorf("questTypeFlagsPtr is null; cannot read main quest properties")
 	}
-	if err := check(questTypeFlagsPtr, questBodyLenZZ, "mainQuestProperties"); err != nil {
+	if err := parseQuestHeader(r, q); err != nil {
+		return nil, err
+	}
+	if err := parseQuestMain(r, q, mainPtr); err != nil {
 		return nil, err
 	}
 
-	mp := questTypeFlagsPtr // shorthand
-
-	q.RankBand = u16(mp + 0x08)
-	q.Fee = u32(mp + 0x0C)
-	q.RewardMain = u32(mp + 0x10)
-	q.RewardSubA = u16(mp + 0x18)
-	q.RewardSubB = u16(mp + 0x1C)
-	q.HardHRReq = u16(mp + 0x1E)
-	questFrames := u32(mp + 0x20)
-	q.TimeLimitMinutes = questFrames / (60 * 30)
-	q.Map = u32(mp + 0x24)
-	questStringsPtr := int(u32(mp + 0x28))
-	q.QuestID = u16(mp + 0x2E)
-
-	// +0x30 objectives[3] (8 bytes each)
-	objectives, err := parseObjectives(data, mp+0x30)
-	if err != nil {
-		return nil, err
+	steps := []struct {
+		name string
+		fn   func(*questReader, *QuestJSON) error
+	}{
+		{"flow script", parseFlowScript},
+		{"stages", parseStages},
+		{"monster respawn points", parseRespawnPoints},
+		{"supply box", parseSupplyBox},
+		{"rewards", parseRewards},
+		{"large monsters", parseLargeMonsters},
+		{"quest area", parseQuestArea},
+		{"area mappings", parseAreaMappings},
+		{"area transitions", parseAreaTransitions},
+		{"map info", parseMapInfo},
+		{"gathering points", parseGatheringPoints},
+		{"area facilities", parseAreaFacilities},
+		{"messages", parseMessages},
+		{"gathering tables", parseGatheringTables},
+		{"fishing spots", parseFishingSpots},
+		{"fish tables", parseFishTables},
 	}
-	q.ObjectiveMain = objectives[0]
-	q.ObjectiveSubA = objectives[1]
-	q.ObjectiveSubB = objectives[2]
-
-	// +0x4C joinRankMin/Max, postRankMin/Max
-	q.JoinRankMin = u16(mp + 0x4C)
-	q.JoinRankMax = u16(mp + 0x4E)
-	q.PostRankMin = u16(mp + 0x50)
-	q.PostRankMax = u16(mp + 0x52)
-
-	// +0x5C forced equipment (6 slots × 4 × u16 = 48 bytes)
-	eq, hasEquip := parseForcedEquip(data, mp+0x5C)
-	if hasEquip {
-		q.ForcedEquipment = eq
-	}
-
-	// +0x97 questVariants
-	q.QuestVariant1 = u8(mp + 0x97)
-	q.QuestVariant2 = u8(mp + 0x98)
-	q.QuestVariant3 = u8(mp + 0x99)
-	q.QuestVariant4 = u8(mp + 0x9A)
-
-	// ── QuestText strings ────────────────────────────────────────────────
-	if questStringsPtr != 0 {
-		if err := check(questStringsPtr, 32, "questTextTable"); err != nil {
-			return nil, err
+	for _, s := range steps {
+		if err := s.fn(r, q); err != nil {
+			return nil, fmt.Errorf("%s: %w", s.name, err)
 		}
-		strPtrs := make([]int, 8)
-		for i := range strPtrs {
-			strPtrs[i] = int(u32(questStringsPtr + i*4))
-		}
-		// A handful of retail quests (observed on arena-style quests with no
-		// day/night variants, e.g. 64551/64552) leave optional slots such as
-		// successCond/failCond holding leftover non-pointer data instead of a
-		// clean 0. Treat an unreadable slot as "no text" rather than failing
-		// the whole quest, matching how a literal null pointer is already
-		// handled below.
-		texts := make([]string, 8)
-		for i, ptr := range strPtrs {
-			if ptr == 0 {
-				continue
-			}
-			s, err := readSJIS(ptr)
-			if err != nil {
-				continue
-			}
-			texts[i] = s
-		}
-		// The binary carries only one language, so the reverse path emits
-		// plain-string LocalizedStrings. Editors wanting multi-language
-		// quests should wrap these as {"jp": "...", "en": "..."} by hand.
-		q.Title = NewLocalizedPlain(texts[0])
-		q.TextMain = NewLocalizedPlain(texts[1])
-		q.TextSubA = NewLocalizedPlain(texts[2])
-		q.TextSubB = NewLocalizedPlain(texts[3])
-		q.SuccessCond = NewLocalizedPlain(texts[4])
-		q.FailCond = NewLocalizedPlain(texts[5])
-		q.Contractor = NewLocalizedPlain(texts[6])
-		q.Description = NewLocalizedPlain(texts[7])
-	}
-
-	// ── Stages ───────────────────────────────────────────────────────────
-	if loadedStagesPtr != 0 && unk34Ptr > loadedStagesPtr {
-		off := loadedStagesPtr
-		for off+16 <= unk34Ptr {
-			if err := check(off, 16, "stage"); err != nil {
-				return nil, err
-			}
-			stageID := u32(off)
-			q.Stages = append(q.Stages, QuestStageJSON{StageID: stageID})
-			off += 16
+		if r.err != nil {
+			return nil, fmt.Errorf("%s: %w", s.name, r.err)
 		}
 	}
-
-	// ── Supply Box ───────────────────────────────────────────────────────
-	if supplyBoxPtr != 0 {
-		const supplyBoxSize = (24 + 8 + 8) * 4
-		if err := check(supplyBoxPtr, supplyBoxSize, "supplyBox"); err != nil {
-			return nil, err
-		}
-		q.SupplyMain = readSupplySlots(data, supplyBoxPtr, 24)
-		q.SupplySubA = readSupplySlots(data, supplyBoxPtr+24*4, 8)
-		q.SupplySubB = readSupplySlots(data, supplyBoxPtr+24*4+8*4, 8)
-	}
-
-	// ── Reward Tables ────────────────────────────────────────────────────
-	if rewardPtr != 0 {
-		tables, err := parseRewardTables(data, rewardPtr)
-		if err != nil {
-			return nil, err
-		}
-		q.Rewards = tables
-	}
-
-	// ── Large Monster Spawns ─────────────────────────────────────────────
-	if largeMonsterPtr != 0 {
-		monsters, err := parseMonsterSpawns(data, largeMonsterPtr, f32)
-		if err != nil {
-			return nil, err
-		}
-		q.LargeMonsters = monsters
-	}
-
-	// ── Map Sections (questAreaPtr) ──────────────────────────────────────
-	// Layout: u32 ptr[] terminated by u32(0), then each mapSection:
-	//   u32 loadedStage, u32 unk, u32 spawnTypesPtr, u32 spawnStatsPtr,
-	//   u32(0) gap, u16 unk — then spawnTypes and spawnStats data.
-	if questAreaPtr != 0 {
-		sections, err := parseMapSections(data, questAreaPtr, u32, u16, f32)
-		if err != nil {
-			return nil, err
-		}
-		q.MapSections = sections
-	}
-
-	// ── Area Mappings (areaMappingPtr) ────────────────────────────────────
-	// Read AreaMappings until reaching areaTransitionsPtr (or end of file
-	// if areaTransitionsPtr is null). Each entry is 32 bytes.
-	if areaMappingPtr != 0 {
-		endOff := len(data)
-		if areaTransitionsPtr != 0 {
-			endOff = areaTransitionsPtr
-		}
-		mappings, err := parseAreaMappings(data, areaMappingPtr, endOff, f32)
-		if err != nil {
-			return nil, err
-		}
-		q.AreaMappings = mappings
-	}
-
-	// ── Area Transitions (areaTransitionsPtr) ─────────────────────────────
-	// playerAreaChange[area1Zones]: one u32 ptr per zone.
-	if areaTransitionsPtr != 0 && area1Zones > 0 {
-		transitions, err := parseAreaTransitions(data, areaTransitionsPtr, area1Zones, u32, i16, f32)
-		if err != nil {
-			return nil, err
-		}
-		q.AreaTransitions = transitions
-	}
-
-	// ── Map Info (mapInfoPtr) ─────────────────────────────────────────────
-	if mapInfoPtr != 0 {
-		if err := check(mapInfoPtr, 8, "mapInfo"); err != nil {
-			return nil, err
-		}
-		q.MapInfo = &QuestMapInfoJSON{
-			MapID:      u32(mapInfoPtr),
-			ReturnBCID: u32(mapInfoPtr + 4),
-		}
-	}
-
-	// ── Gathering Points (gatheringPointsPtr) ─────────────────────────────
-	// ptGatheringPoint[area1Zones]: one u32 ptr per zone.
-	if gatheringPointsPtr != 0 && area1Zones > 0 {
-		gatherPts, err := parseGatheringPoints(data, gatheringPointsPtr, area1Zones, u32, u16, f32)
-		if err != nil {
-			return nil, err
-		}
-		q.GatheringPoints = gatherPts
-	}
-
-	// ── Area Facilities (areaFacilitiesPtr) ───────────────────────────────
-	// ptVar<facPointBlock>[area1Zones]: one u32 ptr per zone.
-	if areaFacilitiesPtr != 0 && area1Zones > 0 {
-		facilities, err := parseAreaFacilities(data, areaFacilitiesPtr, area1Zones, u32, u16, f32)
-		if err != nil {
-			return nil, err
-		}
-		q.AreaFacilities = facilities
-	}
-
-	// ── Some Strings (someStringsPtr / unk30) ─────────────────────────────
-	// Layout: ptr someStringPtr, ptr questTypePtr (8 bytes at someStringsPtr).
-	if someStringsPtr != 0 {
-		if err := check(someStringsPtr, 8, "someStrings"); err != nil {
-			return nil, err
-		}
-		someStrP := int(u32(someStringsPtr))
-		questTypeP := int(u32(someStringsPtr + 4))
-		if someStrP != 0 {
-			s, err := readSJIS(someStrP)
-			if err != nil {
-				return nil, fmt.Errorf("someString: %w", err)
-			}
-			q.SomeString = s
-		}
-		if questTypeP != 0 {
-			s, err := readSJIS(questTypeP)
-			if err != nil {
-				return nil, fmt.Errorf("questTypeString: %w", err)
-			}
-			q.QuestType = s
-		}
-	}
-
-	// ── Gathering Tables (gatheringTablesPtr) ─────────────────────────────
-	// ptVar<gatheringTable>[gatheringTablesQty]: one u32 ptr per table.
-	// GatherItem: u16 rate + u16 item, terminated by u16(0xFFFF).
-	if gatheringTablesPtr != 0 && gatheringTablesQty > 0 {
-		tables, err := parseGatheringTables(data, gatheringTablesPtr, gatheringTablesQty, u32, u16)
-		if err != nil {
-			return nil, err
-		}
-		q.GatheringTables = tables
-	}
-
 	return q, nil
 }
 
-// ── Section parsers ──────────────────────────────────────────────────────────
+func parseQuestHeader(r *questReader, q *QuestJSON) error {
+	q.MonsterSizeMulti = r.u16(0x44)
+	q.SizeRange = r.u16(0x46)
+	q.StatTable1 = r.u32(0x48)
+	q.MainRankPoints = r.u32(0x4C)
+	q.SubARankPoints = r.u32(0x54)
+	q.SubBRankPoints = r.u32(0x58)
+	q.StatTable2 = r.u8(0x61)
 
-// parseObjectives reads the three 8-byte objective entries at off.
-func parseObjectives(data []byte, off int) ([3]QuestObjectiveJSON, error) {
-	var objs [3]QuestObjectiveJSON
-	for i := range objs {
-		base := off + i*8
-		if base+8 > len(data) {
-			return objs, fmt.Errorf("objective[%d] at 0x%X out of bounds", i, base)
-		}
-		goalType := binary.LittleEndian.Uint32(data[base:])
-		typeName, ok := objTypeToString(goalType)
-		if !ok {
-			typeName = "none"
-		}
-		obj := QuestObjectiveJSON{Type: typeName}
-
-		if goalType != questObjNone {
-			switch goalType {
-			case questObjHunt, questObjCapture, questObjSlay, questObjDamage,
-				questObjSlayOrDamage, questObjBreakPart:
-				obj.Target = uint16(data[base+4])
-				// data[base+5] is padding
-			default:
-				obj.Target = binary.LittleEndian.Uint16(data[base+4:])
-			}
-
-			secondary := binary.LittleEndian.Uint16(data[base+6:])
-			if goalType == questObjBreakPart {
-				obj.Part = secondary
-			} else {
-				obj.Count = secondary
-			}
-		}
-		objs[i] = obj
+	h := &QuestHeaderExtJSON{
+		Unk50:        r.u32(0x50),
+		Unk5C:        trimBytes(r.bytes(0x5C, 5)),
+		EmQuestParam: r.i16(0x62),
+		Unk74:        r.u16(0x74),
+		Unk9C:        trimBytes(r.bytes(0x9C, questHeaderSize-0x9C)),
 	}
-	return objs, nil
+	for i := 0; i < 2; i++ {
+		o := 0x64 + i*8
+		h.Unk64 = append(h.Unk64, QuestHeaderUnk64JSON{A: r.u32(o), B: r.u16(o + 4), C: r.u8(o + 6), D: r.u8(o + 7)})
+	}
+	if h.Unk64[0] == (QuestHeaderUnk64JSON{}) && h.Unk64[1] == (QuestHeaderUnk64JSON{}) {
+		h.Unk64 = nil
+	} else if h.Unk64[1] == (QuestHeaderUnk64JSON{}) {
+		h.Unk64 = h.Unk64[:1]
+	}
+	h.Unk80 = trimUint16s([]uint16{r.u16(0x80), r.u16(0x82), r.u16(0x84), r.u16(0x86)})
+	u88 := QuestHeaderUnk88JSON{
+		A: r.u8(0x88), B: r.u8(0x89), C: r.u16(0x8A), D: r.u16(0x8C),
+		E: r.u8(0x8E), F: r.u8(0x8F), G: r.u16(0x90), H: r.u16(0x92),
+	}
+	if u88 != (QuestHeaderUnk88JSON{}) {
+		h.Unk88 = &u88
+	}
+	h.Unk94 = trimUint32s([]uint32{r.u32(0x94), r.u32(0x98)})
+	if !isZero(*h) {
+		q.HeaderExt = h
+	}
+	return r.err
 }
 
-// parseForcedEquip reads 6 slots × 4 uint16 at off.
-// Returns nil, false if all values are zero (no forced equipment).
-func parseForcedEquip(data []byte, off int) (*QuestForcedEquipJSON, bool) {
+func parseQuestMain(r *questReader, q *QuestJSON, mp int) error {
+	if !r.ok(mp, questBodyLenZZ, "main quest properties") {
+		return r.err
+	}
+	m := &QuestMainExtJSON{
+		Flags:               r.u32(mp),
+		Unk04:               trimBytes(r.bytes(mp+0x04, 4)),
+		Unk0A:               trimBytes(r.bytes(mp+0x0A, 2)),
+		Unk14:               r.u32(mp + 0x14),
+		Unk1A:               r.u16(mp + 0x1A),
+		Unk2C:               trimBytes(r.bytes(mp+0x2C, 2)),
+		Unk48:               trimBytes(r.bytes(mp+0x48, 2)),
+		Unk4A:               r.u16(mp + 0x4A),
+		Unk8C:               r.u32(mp + 0x8C),
+		MonsterVariants:     trimBytes(r.bytes(mp+0x90, 3)),
+		MapVariant:          r.u8(mp + 0x93),
+		RequiredItem:        r.u16(mp + 0x94),
+		RequiredItemCount:   r.u8(mp + 0x96),
+		Unk9B:               trimBytes(r.bytes(mp+0x9B, 5)),
+		AllowedEquipBitmask: r.u32(mp + 0xA0),
+		MainPoints:          r.u32(mp + 0xA4),
+		SubAPoints:          r.u32(mp + 0xA8),
+		SubBPoints:          r.u32(mp + 0xAC),
+		RewardItems:         trimUint16s([]uint16{r.u16(mp + 0xB0), r.u16(mp + 0xB2), r.u16(mp + 0xB4)}),
+		UnkB6:               trimBytes(r.bytes(mp+0xB6, 14)),
+		QuestClearsAllowed:  r.u32(mp + 0xC4),
+		UnkC8:               trimBytes(r.bytes(mp+0xC8, questBodyLenZZ-0xC8)),
+	}
+
+	q.RankBand = r.u16(mp + 0x08)
+	q.Fee = r.u32(mp + 0x0C)
+	q.RewardMain = r.u32(mp + 0x10)
+	q.RewardSubA = r.u16(mp + 0x18)
+	q.RewardSubB = r.u16(mp + 0x1C)
+	q.HardHRReq = r.u16(mp + 0x1E)
+	frames := r.u32(mp + 0x20)
+	q.TimeLimitMinutes = frames / (60 * 30)
+	if frames%(60*30) != 0 {
+		q.TimeLimitFrames = frames
+	}
+	q.Map = r.u32(mp + 0x24)
+	q.QuestID = r.u16(mp + 0x2E)
+	objs := [4]QuestObjectiveJSON{}
+	for i, off := range []int{0x30, 0x38, 0x40, 0x54} {
+		objs[i] = parseObjective(r, mp+off)
+	}
+	q.ObjectiveMain, q.ObjectiveSubA, q.ObjectiveSubB = objs[0], objs[1], objs[2]
+	if objs[3] != (QuestObjectiveJSON{Type: "none"}) {
+		m.ObjectiveExtra = &objs[3]
+	}
+	q.JoinRankMin = r.u16(mp + 0x4C)
+	q.JoinRankMax = r.u16(mp + 0x4E)
+	q.PostRankMin = r.u16(mp + 0x50)
+	q.PostRankMax = r.u16(mp + 0x52)
+
 	eq := &QuestForcedEquipJSON{}
-	slots := []*[4]uint16{&eq.Legs, &eq.Weapon, &eq.Head, &eq.Chest, &eq.Arms, &eq.Waist}
-	anyNonZero := false
-	for _, slot := range slots {
+	off := mp + 0x5C
+	for _, slot := range []*[4]uint16{&eq.Legs, &eq.Weapon, &eq.Head, &eq.Chest, &eq.Arms, &eq.Waist} {
 		for j := range slot {
-			v := binary.LittleEndian.Uint16(data[off:])
-			slot[j] = v
-			if v != 0 {
-				anyNonZero = true
-			}
+			slot[j] = r.u16(off)
 			off += 2
 		}
 	}
-	if !anyNonZero {
-		return nil, false
+	if *eq != (QuestForcedEquipJSON{}) {
+		q.ForcedEquipment = eq
 	}
-	return eq, true
+	q.QuestVariant1 = r.u8(mp + 0x97)
+	q.QuestVariant2 = r.u8(mp + 0x98)
+	q.QuestVariant3 = r.u8(mp + 0x99)
+	q.QuestVariant4 = r.u8(mp + 0x9A)
+	if !isZero(*m) {
+		q.MainExt = m
+	}
+
+	// Quest text: 8 string pointers. A few retail quests leave leftover
+	// non-pointer data in optional slots; read those as empty.
+	sp := int(r.u32(mp + 0x28))
+	texts := make([]string, questStringCount)
+	if sp != 0 && r.ok(sp, questStringCount*4, "quest text table") {
+		for i := range texts {
+			if p := int(r.u32(sp + i*4)); p != 0 {
+				if s, err := r.sjis(p); err == nil {
+					texts[i] = s
+				}
+			}
+		}
+	}
+	q.Title = NewLocalizedPlain(texts[0])
+	q.TextMain = NewLocalizedPlain(texts[1])
+	q.TextSubA = NewLocalizedPlain(texts[2])
+	q.TextSubB = NewLocalizedPlain(texts[3])
+	q.SuccessCond = NewLocalizedPlain(texts[4])
+	q.FailCond = NewLocalizedPlain(texts[5])
+	q.Contractor = NewLocalizedPlain(texts[6])
+	q.Description = NewLocalizedPlain(texts[7])
+	return r.err
 }
 
-// readSupplySlots reads n supply item slots (each 4 bytes: u16 item + u16 qty)
-// starting at off and returns only non-empty entries (item != 0).
-func readSupplySlots(data []byte, off, n int) []QuestSupplyItemJSON {
-	var out []QuestSupplyItemJSON
+// parseObjective reads one 8-byte objective.
+func parseObjective(r *questReader, off int) QuestObjectiveJSON {
+	goalType := r.u32(off)
+	obj := QuestObjectiveJSON{Type: objTypeToString(goalType), Target: r.u16(off + 4)}
+	if goalType == questObjBreakPart {
+		obj.Part = r.u16(off + 6)
+	} else {
+		obj.Count = r.u16(off + 6)
+	}
+	return obj
+}
+
+func parseFlowScript(r *questReader, q *QuestJSON) error {
+	ptr := int(r.u32(0x10) & 0x7FFFFFFF)
+	n := int(r.u16(0x76)) / (1 + questFlowArgCount)
 	for i := 0; i < n; i++ {
-		base := off + i*4
-		item := binary.LittleEndian.Uint16(data[base:])
-		qty := binary.LittleEndian.Uint16(data[base+2:])
-		if item == 0 {
-			continue
+		o := ptr + i*8
+		args := []int16{r.i16(o + 2), r.i16(o + 4), r.i16(o + 6)}
+		for len(args) > 0 && args[len(args)-1] == 0 {
+			args = args[:len(args)-1]
 		}
-		out = append(out, QuestSupplyItemJSON{Item: item, Quantity: qty})
+		q.FlowScript = append(q.FlowScript, QuestFlowOpJSON{Op: r.i16(o), Args: args})
 	}
-	return out
+	return r.err
 }
 
-// parseRewardTables reads the reward table array starting at baseOff.
-// Header array: {u8 tableId, u8 pad, u16 pad, u32 tableOffset} per entry,
-// terminated by int16(-1). tableOffset is an absolute offset into the file
-// (confirmed against retail quest binaries and the questfile.bin.hexpat
-// pattern, which places RewardItem[] directly `@ tableOffset` with no base
-// added), not relative to baseOff.
-// Each item list: {u16 rate, u16 item, u16 quantity} terminated by int16(-1).
-func parseRewardTables(data []byte, baseOff int) ([]QuestRewardTableJSON, error) {
-	var tables []QuestRewardTableJSON
-	off := baseOff
-	for {
-		if off+2 > len(data) {
-			return nil, fmt.Errorf("reward table header truncated at 0x%X", off)
-		}
-		if binary.LittleEndian.Uint16(data[off:]) == 0xFFFF {
-			break
-		}
-		if off+8 > len(data) {
-			return nil, fmt.Errorf("reward table header entry truncated at 0x%X", off)
-		}
-		tableID := data[off]
-		tableOff := int(binary.LittleEndian.Uint32(data[off+4:]))
-		off += 8
-
-		items, err := parseRewardItems(data, tableOff)
-		if err != nil {
-			return nil, fmt.Errorf("reward table %d items: %w", tableID, err)
-		}
-		tables = append(tables, QuestRewardTableJSON{TableID: tableID, Items: items})
+func parseStages(r *questReader, q *QuestJSON) error {
+	ptr := int(r.u32(0x04))
+	if ptr == 0 {
+		return nil
 	}
-	return tables, nil
+	for i := 0; i < questStageCount; i++ {
+		o := ptr + i*16
+		q.Stages = append(q.Stages, QuestStageJSON{StageID: r.u32(o), X: r.f32(o + 4), Y: r.f32(o + 8), Z: r.f32(o + 12)})
+	}
+	return r.err
 }
 
-// parseRewardItems reads a null-terminated reward item list at off.
-func parseRewardItems(data []byte, off int) ([]QuestRewardItemJSON, error) {
-	var items []QuestRewardItemJSON
-	for {
-		if off+2 > len(data) {
-			return nil, fmt.Errorf("reward item list truncated at 0x%X", off)
-		}
-		if binary.LittleEndian.Uint16(data[off:]) == 0xFFFF {
-			break
-		}
-		if off+6 > len(data) {
-			return nil, fmt.Errorf("reward item entry truncated at 0x%X", off)
-		}
-		rate := binary.LittleEndian.Uint16(data[off:])
-		item := binary.LittleEndian.Uint16(data[off+2:])
-		qty := binary.LittleEndian.Uint16(data[off+4:])
-		items = append(items, QuestRewardItemJSON{Rate: rate, Item: item, Quantity: qty})
-		off += 6
+func parseRespawnPoints(r *questReader, q *QuestJSON) error {
+	ptr := int(r.u32(0x34))
+	if ptr == 0 {
+		return nil
 	}
-	return items, nil
+	for i := 0; i < maxQuestListLen && r.err == nil; i++ {
+		o := ptr + i*8
+		if r.i16(o) == -1 {
+			return r.err
+		}
+		st := QuestRespawnStageJSON{Stage: r.u16(o)}
+		count := int(r.u16(o + 2))
+		pts := int(r.u32(o + 4))
+		for j := 0; j < count; j++ {
+			p := pts + j*16
+			st.Points = append(st.Points, QuestRespawnPointJSON{Angle: r.u32(p), X: r.f32(p + 4), Y: r.f32(p + 8), Z: r.f32(p + 12)})
+		}
+		q.MonsterRespawnPoints = append(q.MonsterRespawnPoints, st)
+	}
+	return fmt.Errorf("list not terminated")
 }
 
-// parseMonsterSpawns reads the large monster pointer block at baseOff:
-// an 8-byte header (constant 01 00 00 00 00 00 00 00 in every retail quest
-// observed), a u32 absolute pointer to a fixed 5-slot MonsterID array
-// (unused here — it duplicates each spawn slot's own ID and is zero where
-// unused), and a u32 absolute pointer to a fixed 5-slot, 60-byte-per-entry
-// spawn array. A spawn slot with ID 0xFF is unused.
-func parseMonsterSpawns(data []byte, baseOff int, f32fn func(int) float32) ([]QuestMonsterJSON, error) {
-	const slotCount = 5
-	const entrySize = 60
-
-	if baseOff+16 > len(data) {
-		return nil, fmt.Errorf("large monster pointer block at 0x%X truncated", baseOff)
+func parseSupplyBox(r *questReader, q *QuestJSON) error {
+	ptr := int(r.u32(0x08))
+	if ptr == 0 {
+		return nil
 	}
-	spawnsPtr := int(binary.LittleEndian.Uint32(data[baseOff+12:]))
-
-	var monsters []QuestMonsterJSON
-	for i := 0; i < slotCount; i++ {
-		off := spawnsPtr + i*entrySize
-		if off+entrySize > len(data) {
-			return nil, fmt.Errorf("monster spawn slot %d at 0x%X truncated", i, off)
-		}
-		if data[off] == 0xFF {
-			continue
-		}
-		m := QuestMonsterJSON{
-			ID:          data[off],
-			SpawnAmount: binary.LittleEndian.Uint32(data[off+4:]),
-			SpawnStage:  binary.LittleEndian.Uint32(data[off+8:]),
-			// +0x0C padding[16]
-			Orientation: binary.LittleEndian.Uint32(data[off+0x1C:]),
-			X:           f32fn(off + 0x20),
-			Y:           f32fn(off + 0x24),
-			Z:           f32fn(off + 0x28),
-			// +0x2C padding[16]
-		}
-		monsters = append(monsters, m)
-	}
-	return monsters, nil
-}
-
-// parseMapSections reads the MapZones structure at baseOff.
-// Layout: u32 ptr[] terminated by u32(0); each ptr points to a mapSection:
-//
-//	u32 loadedStage, u32 unk, u32 spawnTypesPtr, u32 spawnStatsPtr.
-//
-// After the 16-byte mapSection: u32(0) gap + u16 unk (2 bytes).
-// spawnTypes: varPaddT<MonsterID,3> = u8+pad[3] per entry, terminated by 0xFFFF.
-// spawnStats: MinionSpawn (60 bytes) per entry, terminated by 0xFFFF in first 2 bytes.
-func parseMapSections(data []byte, baseOff int,
-	u32fn func(int) uint32,
-	u16fn func(int) uint16,
-	f32fn func(int) float32,
-) ([]QuestMapSectionJSON, error) {
-	var sections []QuestMapSectionJSON
-
-	// Read pointer array (terminated by u32(0)).
-	off := baseOff
-	for {
-		if off+4 > len(data) {
-			return nil, fmt.Errorf("mapSection pointer array truncated at 0x%X", off)
-		}
-		ptr := int(u32fn(off))
-		off += 4
-		if ptr == 0 {
-			break
-		}
-
-		// Read mapSection at ptr.
-		if ptr+16 > len(data) {
-			return nil, fmt.Errorf("mapSection at 0x%X truncated", ptr)
-		}
-		loadedStage := u32fn(ptr)
-		// ptr+4 is unk u32 — skip
-		spawnTypesPtr := int(u32fn(ptr + 8))
-		spawnStatsPtr := int(u32fn(ptr + 12))
-
-		ms := QuestMapSectionJSON{LoadedStage: loadedStage}
-
-		// Read spawnTypes: varPaddT<MonsterID,3> terminated by 0xFFFF.
-		if spawnTypesPtr != 0 {
-			stOff := spawnTypesPtr
-			for {
-				if stOff+2 > len(data) {
-					return nil, fmt.Errorf("spawnTypes at 0x%X truncated", stOff)
-				}
-				if u16fn(stOff) == 0xFFFF {
-					break
-				}
-				if stOff+4 > len(data) {
-					return nil, fmt.Errorf("spawnType entry at 0x%X truncated", stOff)
-				}
-				monID := data[stOff]
-				ms.SpawnMonsters = append(ms.SpawnMonsters, monID)
-				stOff += 4 // u8 + pad[3]
+	read := func(off, n int) []QuestSupplyItemJSON {
+		items := make([]QuestSupplyItemJSON, n)
+		last := -1
+		for i := range items {
+			items[i] = QuestSupplyItemJSON{Item: r.u16(off + i*4), Quantity: r.u16(off + i*4 + 2)}
+			if items[i] != (QuestSupplyItemJSON{}) {
+				last = i
 			}
 		}
-
-		// Read spawnStats: MinionSpawn terminated by 0xFFFF in first 2 bytes.
-		if spawnStatsPtr != 0 {
-			const minionSize = 60
-			ssOff := spawnStatsPtr
-			for {
-				if ssOff+2 > len(data) {
-					return nil, fmt.Errorf("spawnStats at 0x%X truncated", ssOff)
-				}
-				// Terminator: first 2 bytes == 0xFFFF.
-				if u16fn(ssOff) == 0xFFFF {
-					break
-				}
-				if ssOff+minionSize > len(data) {
-					return nil, fmt.Errorf("minionSpawn at 0x%X truncated", ssOff)
-				}
-				spawn := QuestMinionSpawnJSON{
-					Monster: data[ssOff],
-					// ssOff+1 padding
-					SpawnToggle: u16fn(ssOff + 2),
-					SpawnAmount: u32fn(ssOff + 4),
-					// +8 unk u32, +0xC pad[16], +0x1C unk u32
-					X: f32fn(ssOff + 0x20),
-					Y: f32fn(ssOff + 0x24),
-					Z: f32fn(ssOff + 0x28),
-				}
-				ms.MinionSpawns = append(ms.MinionSpawns, spawn)
-				ssOff += minionSize
-			}
-		}
-
-		sections = append(sections, ms)
+		return items[:last+1]
 	}
-
-	return sections, nil
+	q.SupplyMain = read(ptr, 24)
+	q.SupplySubA = read(ptr+24*4, 8)
+	q.SupplySubB = read(ptr+32*4, 8)
+	if extra := read(ptr+40*4, 1); len(extra) == 1 {
+		q.SupplyExtra = &extra[0]
+	}
+	if len(q.SupplyMain) == 0 {
+		q.SupplyMain = nil
+	}
+	if len(q.SupplySubA) == 0 {
+		q.SupplySubA = nil
+	}
+	if len(q.SupplySubB) == 0 {
+		q.SupplySubB = nil
+	}
+	return r.err
 }
 
-// parseAreaMappings reads AreaMappings entries at baseOff until endOff.
-// Each entry is 32 bytes: float areaX, float areaZ, pad[8],
-// float baseX, float baseZ, float knPos, pad[4].
-func parseAreaMappings(data []byte, baseOff, endOff int, f32fn func(int) float32) ([]QuestAreaMappingJSON, error) {
-	var mappings []QuestAreaMappingJSON
-	const entrySize = 32
-	off := baseOff
-	for off+entrySize <= endOff {
-		if off+entrySize > len(data) {
-			return nil, fmt.Errorf("areaMapping at 0x%X truncated", off)
-		}
-		am := QuestAreaMappingJSON{
-			AreaX: f32fn(off),
-			AreaZ: f32fn(off + 4),
-			// off+8: pad[8]
-			BaseX: f32fn(off + 16),
-			BaseZ: f32fn(off + 20),
-			KnPos: f32fn(off + 24),
-			// off+28: pad[4]
-		}
-		mappings = append(mappings, am)
-		off += entrySize
+func parseRewards(r *questReader, q *QuestJSON) error {
+	ptr := int(r.u32(0x0C))
+	if ptr == 0 {
+		return nil
 	}
-	return mappings, nil
-}
-
-// parseAreaTransitions reads playerAreaChange[numZones] at baseOff.
-// Each entry is a u32 pointer to a floatSet array terminated by s16(-1).
-// floatSet: s16 targetStageId + s16 stageVariant + float[3] current + float[5] box +
-// float[3] target + s16[2] rotation = 52 bytes.
-func parseAreaTransitions(data []byte, baseOff, numZones int,
-	u32fn func(int) uint32,
-	i16fn func(int) int16,
-	f32fn func(int) float32,
-) ([]QuestAreaTransitionsJSON, error) {
-	result := make([]QuestAreaTransitionsJSON, numZones)
-
-	if baseOff+numZones*4 > len(data) {
-		return nil, fmt.Errorf("areaTransitions pointer array at 0x%X truncated", baseOff)
-	}
-
-	for i := 0; i < numZones; i++ {
-		ptr := int(u32fn(baseOff + i*4))
-		if ptr == 0 {
-			// Null pointer — no transitions for this zone.
-			continue
+	for i := 0; i < maxQuestListLen && r.err == nil; i++ {
+		o := ptr + i*8
+		id := r.u16(o)
+		if id == 0xFFFF {
+			return r.err
 		}
-
-		// Read floatSet entries until targetStageId1 == -1.
-		var transitions []QuestAreaTransitionJSON
-		off := ptr
-		for {
-			if off+2 > len(data) {
-				return nil, fmt.Errorf("floatSet at 0x%X truncated", off)
-			}
-			targetStageID := i16fn(off)
-			if targetStageID == -1 {
+		t := QuestRewardTableJSON{TableID: uint8(id), TableFlags: uint8(id >> 8), Items: []QuestRewardItemJSON{}}
+		for p, n := int(r.u32(o+4)), 0; n < maxQuestListLen && r.err == nil; p, n = p+6, n+1 {
+			if r.u16(p) == 0xFFFF {
 				break
 			}
-			// Each floatSet is 52 bytes:
-			//   s16 targetStageId1 + s16 stageVariant = 4
-			//   float[3] current = 12
-			//   float[5] transitionBox = 20
-			//   float[3] target = 12
-			//   s16[2] rotation = 4
-			// Total = 52
-			const floatSetSize = 52
-			if off+floatSetSize > len(data) {
-				return nil, fmt.Errorf("floatSet at 0x%X truncated (need %d bytes)", off, floatSetSize)
+			t.Items = append(t.Items, QuestRewardItemJSON{Rate: r.u16(p), Item: r.u16(p + 2), Quantity: r.u16(p + 4)})
+		}
+		q.Rewards = append(q.Rewards, t)
+	}
+	return fmt.Errorf("list not terminated")
+}
+
+// readSpawns reads a 60-byte spawn list ending with monster -1.
+func readSpawns(r *questReader, ptr int) ([]spawnRecord, error) {
+	var out []spawnRecord
+	for i := 0; i < maxQuestListLen && r.err == nil; i++ {
+		o := ptr + i*questSpawnEntrySize
+		if r.i16(o) == -1 {
+			return out, r.err
+		}
+		out = append(out, spawnRecord{
+			monster:     uint8(r.u16(o)),
+			unk02:       r.u16(o + 2),
+			amount:      r.u32(o + 4),
+			unk08:       r.u32(o + 8),
+			unk0C:       trimInt32s([]int32{r.i32(o + 0x0C), r.i32(o + 0x10), r.i32(o + 0x14), r.i32(o + 0x18)}),
+			orientation: r.u32(o + 0x1C),
+			x:           r.f32(o + 0x20),
+			y:           r.f32(o + 0x24),
+			z:           r.f32(o + 0x28),
+			unk2C:       trimBytes(r.bytes(o+0x2C, 16)),
+		})
+	}
+	if r.err != nil {
+		return nil, r.err
+	}
+	return nil, fmt.Errorf("spawn list at 0x%X not terminated", ptr)
+}
+
+func parseLargeMonsters(r *questReader, q *QuestJSON) error {
+	ptr := int(r.u32(0x18))
+	if ptr == 0 || r.u32(ptr) == 0 {
+		return r.err
+	}
+	spawns, err := readSpawns(r, int(r.u32(ptr+12)))
+	if err != nil {
+		return err
+	}
+	for _, s := range spawns {
+		q.LargeMonsters = append(q.LargeMonsters, QuestMonsterJSON{
+			ID: s.monster, Unk02: s.unk02, SpawnAmount: s.amount, SpawnStage: s.unk08,
+			Unk0C: s.unk0C, Orientation: s.orientation, X: s.x, Y: s.y, Z: s.z, Unk2C: byteList(s.unk2C),
+		})
+	}
+	return r.err
+}
+
+func parseQuestArea(r *questReader, q *QuestJSON) error {
+	ptr := int(r.u32(0x14))
+	if ptr == 0 {
+		return nil
+	}
+	for g := 0; g < maxQuestListLen && r.err == nil; g++ {
+		gp := int(r.u32(ptr + g*4))
+		if gp == 0 {
+			return r.err
+		}
+		group := []QuestMapSectionJSON{}
+		for s := 0; s < maxQuestListLen && r.err == nil; s++ {
+			o := gp + s*16
+			stage := r.u32(o)
+			if stage == 0 {
+				break
+			}
+			ms := QuestMapSectionJSON{LoadedStage: stage, Unk04: r.u32(o + 4)}
+			if tp := int(r.u32(o + 8)); tp != 0 {
+				ms.SpawnTypes = []int32{r.i32(tp), r.i32(tp + 4), r.i32(tp + 8), r.i32(tp + 12)}
+			}
+			if sp := int(r.u32(o + 12)); sp != 0 {
+				spawns, err := readSpawns(r, sp)
+				if err != nil {
+					return err
+				}
+				for _, sr := range spawns {
+					ms.MinionSpawns = append(ms.MinionSpawns, QuestMinionSpawnJSON{
+						Monster: sr.monster, SpawnToggle: sr.unk02, SpawnAmount: sr.amount, Unk08: sr.unk08,
+						Unk0C: sr.unk0C, Orientation: sr.orientation, X: sr.x, Y: sr.y, Z: sr.z, Unk2C: byteList(sr.unk2C),
+					})
+				}
+			}
+			group = append(group, ms)
+		}
+		q.QuestArea = append(q.QuestArea, group)
+	}
+	return fmt.Errorf("list not terminated")
+}
+
+func parseAreaMappings(r *questReader, q *QuestJSON) error {
+	ptr := int(r.u32(0x20))
+	n := int(r.u8(0x7C))
+	for i := 0; i < n && ptr != 0; i++ {
+		o := ptr + i*32
+		q.AreaMappings = append(q.AreaMappings, QuestAreaMappingJSON{
+			AreaX: r.f32(o), AreaZ: r.f32(o + 4), Unk08: r.f32(o + 8), Unk0C: r.f32(o + 12),
+			BaseX: r.f32(o + 16), BaseZ: r.f32(o + 20), KnPos: r.f32(o + 24), Unk1C: r.f32(o + 28),
+		})
+	}
+	return r.err
+}
+
+func parseAreaTransitions(r *questReader, q *QuestJSON) error {
+	ptr := int(r.u32(0x1C))
+	n := int(r.u8(0x7F))
+	for i := 0; i < n && ptr != 0; i++ {
+		zone := QuestAreaTransitionsJSON{}
+		for o, k := int(r.u32(ptr+i*4)), 0; o != 0 && k < maxQuestListLen && r.err == nil; o, k = o+52, k+1 {
+			if r.i16(o) == -1 {
+				zone.EmptyList = k == 0
+				break
 			}
 			tr := QuestAreaTransitionJSON{
-				TargetStageID1: targetStageID,
-				StageVariant:   i16fn(off + 2),
-				CurrentX:       f32fn(off + 4),
-				CurrentY:       f32fn(off + 8),
-				CurrentZ:       f32fn(off + 12),
-				TargetX:        f32fn(off + 36),
-				TargetY:        f32fn(off + 40),
-				TargetZ:        f32fn(off + 44),
+				TargetStageID1: r.i16(o), StageVariant: r.i16(o + 2),
+				CurrentX: r.f32(o + 4), CurrentY: r.f32(o + 8), CurrentZ: r.f32(o + 12),
+				TargetX: r.f32(o + 36), TargetY: r.f32(o + 40), TargetZ: r.f32(o + 44),
+				TargetRotation: [2]int16{r.i16(o + 48), r.i16(o + 50)},
 			}
-			for j := 0; j < 5; j++ {
-				tr.TransitionBox[j] = f32fn(off + 16 + j*4)
+			for j := range tr.TransitionBox {
+				tr.TransitionBox[j] = r.f32(o + 16 + j*4)
 			}
-			tr.TargetRotation[0] = i16fn(off + 48)
-			tr.TargetRotation[1] = i16fn(off + 50)
-			transitions = append(transitions, tr)
-			off += floatSetSize
+			zone.Transitions = append(zone.Transitions, tr)
 		}
-		result[i] = QuestAreaTransitionsJSON{Transitions: transitions}
+		q.AreaTransitions = append(q.AreaTransitions, zone)
 	}
-
-	return result, nil
+	return r.err
 }
 
-// parseGatheringPoints reads ptGatheringPoint[numZones] at baseOff.
-// Each entry is a u32 pointer to gatheringPoint[4] terminated by xPos==-1.0.
-// gatheringPoint: float xPos, yPos, zPos, range, u16 gatheringID, u16 maxCount, pad[2], u16 minCount = 24 bytes.
-func parseGatheringPoints(data []byte, baseOff, numZones int,
-	u32fn func(int) uint32,
-	u16fn func(int) uint16,
-	f32fn func(int) float32,
-) ([]QuestAreaGatheringJSON, error) {
-	result := make([]QuestAreaGatheringJSON, numZones)
-
-	if baseOff+numZones*4 > len(data) {
-		return nil, fmt.Errorf("gatheringPoints pointer array at 0x%X truncated", baseOff)
+func parseMapInfo(r *questReader, q *QuestJSON) error {
+	ptr := int(r.u32(0x24))
+	if ptr == 0 {
+		return nil
 	}
-
-	const sentinel = uint32(0xBF800000) // float32(-1.0)
-	const pointSize = 24
-
-	for i := 0; i < numZones; i++ {
-		ptr := int(u32fn(baseOff + i*4))
-		if ptr == 0 {
-			continue
-		}
-
-		var points []QuestGatheringPointJSON
-		off := ptr
-		for {
-			if off+4 > len(data) {
-				return nil, fmt.Errorf("gatheringPoint at 0x%X truncated", off)
-			}
-			// Terminator: xPos bit pattern == 0xBF800000 (-1.0f).
-			if binary.LittleEndian.Uint32(data[off:]) == sentinel {
-				break
-			}
-			if off+pointSize > len(data) {
-				return nil, fmt.Errorf("gatheringPoint entry at 0x%X truncated", off)
-			}
-			gp := QuestGatheringPointJSON{
-				X:           f32fn(off),
-				Y:           f32fn(off + 4),
-				Z:           f32fn(off + 8),
-				Range:       f32fn(off + 12),
-				GatheringID: u16fn(off + 16),
-				MaxCount:    u16fn(off + 18),
-				// off+20 pad[2]
-				MinCount: u16fn(off + 22),
-			}
-			points = append(points, gp)
-			off += pointSize
-		}
-		result[i] = QuestAreaGatheringJSON{Points: points}
-	}
-
-	return result, nil
+	q.MapInfo = &QuestMapInfoJSON{MapID: r.u32(ptr), ReturnBCID: r.u32(ptr + 4), Unk08: r.u32(ptr + 8), Unk0C: r.u32(ptr + 12)}
+	return r.err
 }
 
-// parseAreaFacilities reads ptVar<facPointBlock>[numZones] at baseOff.
-// Each entry is a u32 pointer to a facPointBlock.
-// facPoint: pad[2] + SpecAc(u16) + xPos + yPos + zPos + range + id(u16) + pad[2] = 24 bytes.
-// Termination: the loop condition checks read_unsigned($+4,4) != 0xBF800000.
-// So a facPoint whose xPos (at offset +4 from start of that potential entry) == -1.0 terminates.
-// After all facPoints: padding[0xC] + float + float = 20 bytes (block footer, not parsed into JSON).
-func parseAreaFacilities(data []byte, baseOff, numZones int,
-	u32fn func(int) uint32,
-	u16fn func(int) uint16,
-	f32fn func(int) float32,
-) ([]QuestAreaFacilitiesJSON, error) {
-	result := make([]QuestAreaFacilitiesJSON, numZones)
-
-	if baseOff+numZones*4 > len(data) {
-		return nil, fmt.Errorf("areaFacilities pointer array at 0x%X truncated", baseOff)
-	}
-
-	const sentinel = uint32(0xBF800000)
-	const pointSize = 24
-
-	for i := 0; i < numZones; i++ {
-		ptr := int(u32fn(baseOff + i*4))
-		if ptr == 0 {
-			continue
-		}
-
-		var points []QuestFacilityPointJSON
-		off := ptr
-		for off+8 <= len(data) {
-			// Check: read_unsigned($+4, 4) == sentinel means terminate.
-			// $+4 is the xPos field of the potential next facPoint.
-			if binary.LittleEndian.Uint32(data[off+4:]) == sentinel {
+func parseGatheringPoints(r *questReader, q *QuestJSON) error {
+	ptr := int(r.u32(0x28))
+	n := int(r.u8(0x7E))
+	for i := 0; i < n && ptr != 0; i++ {
+		zone := QuestAreaGatheringJSON{}
+		// The client stops at a max count of 0; the terminator also has x = -1.
+		for o, k := int(r.u32(ptr+i*4)), 0; o != 0 && k < maxQuestListLen && r.err == nil; o, k = o+24, k+1 {
+			if r.u16(o+0x12) == 0 {
+				zone.EmptyList = k == 0
 				break
 			}
-			if off+pointSize > len(data) {
-				return nil, fmt.Errorf("facPoint at 0x%X truncated", off)
-			}
-			fp := QuestFacilityPointJSON{
-				// off+0: pad[2]
-				Type:  u16fn(off + 2),
-				X:     f32fn(off + 4),
-				Y:     f32fn(off + 8),
-				Z:     f32fn(off + 12),
-				Range: f32fn(off + 16),
-				ID:    u16fn(off + 20),
-				// off+22: pad[2]
-			}
-			points = append(points, fp)
-			off += pointSize
-		}
-		result[i] = QuestAreaFacilitiesJSON{Points: points}
-	}
-
-	return result, nil
-}
-
-// parseGatheringTables reads ptVar<gatheringTable>[count] at baseOff.
-// Each entry is a u32 pointer to GatherItem[] terminated by u16(0xFFFF).
-// GatherItem: u16 rate + u16 item = 4 bytes.
-func parseGatheringTables(data []byte, baseOff, count int,
-	u32fn func(int) uint32,
-	u16fn func(int) uint16,
-) ([]QuestGatheringTableJSON, error) {
-	result := make([]QuestGatheringTableJSON, count)
-
-	if baseOff+count*4 > len(data) {
-		return nil, fmt.Errorf("gatheringTables pointer array at 0x%X truncated", baseOff)
-	}
-
-	for i := 0; i < count; i++ {
-		ptr := int(u32fn(baseOff + i*4))
-		if ptr == 0 {
-			continue
-		}
-
-		var items []QuestGatherItemJSON
-		off := ptr
-		for {
-			if off+2 > len(data) {
-				return nil, fmt.Errorf("gatheringTable at 0x%X truncated", off)
-			}
-			if u16fn(off) == 0xFFFF {
-				break
-			}
-			if off+4 > len(data) {
-				return nil, fmt.Errorf("gatherItem at 0x%X truncated", off)
-			}
-			items = append(items, QuestGatherItemJSON{
-				Rate: u16fn(off),
-				Item: u16fn(off + 2),
+			zone.Points = append(zone.Points, QuestGatheringPointJSON{
+				X: r.f32(o), Y: r.f32(o + 4), Z: r.f32(o + 8), Range: r.f32(o + 12),
+				GatheringID: r.u16(o + 16), MaxCount: r.u16(o + 18), Unk14: r.u16(o + 20), MinCount: r.u16(o + 22),
 			})
-			off += 4
 		}
-		result[i] = QuestGatheringTableJSON{Items: items}
+		q.GatheringPoints = append(q.GatheringPoints, zone)
 	}
-
-	return result, nil
+	return r.err
 }
 
-// objTypeToString maps a uint32 goal type to its JSON string name.
-// Returns "", false for unknown types.
-func objTypeToString(t uint32) (string, bool) {
+func parseAreaFacilities(r *questReader, q *QuestJSON) error {
+	ptr := int(r.u32(0x2C))
+	n := int(r.u8(0x7D))
+	for i := 0; i < n && ptr != 0; i++ {
+		zone := QuestAreaFacilitiesJSON{}
+		for o, k := int(r.u32(ptr+i*4)), 0; o != 0 && k < maxQuestListLen && r.err == nil; o, k = o+24, k+1 {
+			if r.u16(o+2) == 0 {
+				zone.EmptyList = k == 0
+				break
+			}
+			zone.Points = append(zone.Points, QuestFacilityPointJSON{
+				Unk00: r.u16(o), Type: r.u16(o + 2), X: r.f32(o + 4), Y: r.f32(o + 8), Z: r.f32(o + 12),
+				Range: r.f32(o + 16), ID: r.u16(o + 20), Unk16: r.u16(o + 22),
+			})
+		}
+		q.AreaFacilities = append(q.AreaFacilities, zone)
+	}
+	return r.err
+}
+
+func parseMessages(r *questReader, q *QuestJSON) error {
+	ptr := int(r.u32(0x30))
+	if ptr == 0 {
+		return nil
+	}
+	var msgs []string
+	for i := 0; i < maxQuestListLen && r.err == nil; i++ {
+		p := int(r.u32(ptr + i*4))
+		if p == 0 || r.u8(p) == 0 {
+			break
+		}
+		s, err := r.sjis(p)
+		if err != nil {
+			return err
+		}
+		msgs = append(msgs, s)
+	}
+	if len(msgs) > 0 {
+		q.SomeString = msgs[0]
+	}
+	if len(msgs) > 1 {
+		q.QuestType = msgs[1]
+	}
+	if len(msgs) > 2 {
+		q.MessagesExtra = msgs[2:]
+	}
+	return r.err
+}
+
+func parseGatheringTables(r *questReader, q *QuestJSON) error {
+	ptr := int(r.u32(0x38))
+	n := int(r.u16(0x78))
+	for i := 0; i < n && ptr != 0; i++ {
+		tbl := QuestGatheringTableJSON{}
+		for o, k := int(r.u32(ptr+i*4)), 0; o != 0 && k < maxQuestListLen && r.err == nil; o, k = o+4, k+1 {
+			if r.u16(o) == 0xFFFF {
+				tbl.EmptyList = k == 0
+				break
+			}
+			tbl.Items = append(tbl.Items, QuestGatherItemJSON{Rate: r.u16(o), Item: r.u16(o + 2)})
+		}
+		q.GatheringTables = append(q.GatheringTables, tbl)
+	}
+	return r.err
+}
+
+func parseFishingSpots(r *questReader, q *QuestJSON) error {
+	ptr := int(r.u32(0x3C))
+	if ptr == 0 {
+		return nil
+	}
+	for i := 0; i < maxQuestListLen && r.err == nil; i++ {
+		o := ptr + i*8
+		if r.u32(o) == 0 {
+			return r.err
+		}
+		area := QuestFishingAreaJSON{Area: r.i32(o), Spots: []QuestFishingSpotJSON{}}
+		for s, k := int(r.u32(o+4)), 0; k < maxQuestListLen && r.err == nil; s, k = s+24, k+1 {
+			if r.i32(s+0x10) == -1 {
+				break
+			}
+			area.Spots = append(area.Spots, QuestFishingSpotJSON{
+				X: r.f32(s), Y: r.f32(s + 4), Z: r.f32(s + 8), Radius: r.f32(s + 12), Kind: r.i32(s + 16), Unk14: r.i32(s + 20),
+			})
+		}
+		q.FishingSpots = append(q.FishingSpots, area)
+	}
+	return fmt.Errorf("list not terminated")
+}
+
+func parseFishTables(r *questReader, q *QuestJSON) error {
+	ptr := int(r.u32(0x40))
+	n := int(r.u16(0x7A))
+	for i := 0; i < n && ptr != 0; i++ {
+		sp := int(r.u32(ptr + i*4))
+		// A few irregular arena quests hold an out-of-range value here;
+		// it reads as no table.
+		if sp == 0 || sp+questFishTablesPer*8 > len(r.d) {
+			q.FishTables = append(q.FishTables, nil)
+			continue
+		}
+		set := &QuestFishTableSetJSON{}
+		for t := 0; t < questFishTablesPer; t++ {
+			tbl := QuestFishTableJSON{Count: r.u32(sp + t*8 + 4)}
+			for c, k := int(r.u32(sp+t*8)), 0; k < maxQuestListLen && r.err == nil; c, k = c+2, k+1 {
+				if r.u8(c) == 0xFF {
+					break
+				}
+				tbl.Catches = append(tbl.Catches, [2]uint8{r.u8(c), r.u8(c + 1)})
+			}
+			set.Tables = append(set.Tables, tbl)
+		}
+		q.FishTables = append(q.FishTables, set)
+	}
+	return r.err
+}
+
+// objTypeToString maps a goal type to its JSON name, or to its value in hex
+// when it has no name.
+func objTypeToString(t uint32) string {
 	for name, v := range questObjTypeMap {
 		if v == t {
-			return name, true
+			return name
 		}
 	}
-	return "", false
+	return fmt.Sprintf("0x%X", t)
+}
+
+func trimUint16s(v []uint16) []uint16 {
+	n := len(v)
+	for n > 0 && v[n-1] == 0 {
+		n--
+	}
+	if n == 0 {
+		return nil
+	}
+	return v[:n]
+}
+
+func trimUint32s(v []uint32) []uint32 {
+	n := len(v)
+	for n > 0 && v[n-1] == 0 {
+		n--
+	}
+	if n == 0 {
+		return nil
+	}
+	return v[:n]
 }

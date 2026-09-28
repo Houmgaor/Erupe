@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -75,27 +76,26 @@ func runExport(args []string) {
 
 	fmt.Printf("\nexported=%d errors=%d", stats.exported, stats.errors)
 	if *verify {
-		fmt.Printf(" verify_ok=%d verify_mismatch=%d", stats.verifyOK, stats.verifyMismatch)
+		fmt.Printf(" verify_ok=%d verify_mismatch=%d verify_compile_error=%d", stats.verifyOK, stats.verifyMismatch, stats.verifyCompileErr)
 	}
 	fmt.Println()
-	if stats.errors > 0 || stats.verifyMismatch > 0 {
+	if stats.errors > 0 || stats.verifyMismatch > 0 || stats.verifyCompileErr > 0 {
 		os.Exit(1)
 	}
 }
 
 type exportStats struct {
-	exported, errors, verifyOK, verifyMismatch int
+	exported, errors, verifyOK, verifyMismatch, verifyCompileErr int
 }
 
-// convertFunc parses a .bin file's contents into JSON. canonical is what
-// recompile(jsonOut) should be diffed against for --verify: for quests
-// that's the decompressed bytes ParseQuestBinary actually parsed (quest
-// .bin files are whole-file JKR-compressed, but CompileQuestJSON's output
-// is the raw uncompressed layout), while for scenarios it's just the
-// original file (the container itself isn't compressed — only specific
-// sub-chunks are, which ParseScenarioBinary/CompileScenarioJSON already
-// handle internally per docs/scenario-format.md).
-type convertFunc func(raw []byte) (jsonOut, canonical []byte, recompile func([]byte) ([]byte, error), err error)
+// verifyFunc recompiles jsonOut and compares the result with the original
+// file. It returns "" when they match, else a description of the first
+// difference; compileErr is set when the JSON can't be recompiled at all.
+type verifyFunc func(jsonOut []byte) (mismatch string, compileErr error)
+
+// convertFunc parses a .bin file's contents into JSON, with the check
+// --verify runs on it.
+type convertFunc func(raw []byte) (jsonOut []byte, verify verifyFunc, err error)
 
 func exportDir(binPath, subdir, outDir string, verify bool, convert convertFunc, stats *exportStats) {
 	srcDir := filepath.Join(binPath, subdir)
@@ -117,7 +117,7 @@ func exportDir(binPath, subdir, outDir string, verify bool, convert convertFunc,
 			continue
 		}
 
-		jsonOut, canonical, recompile, err := convert(data)
+		jsonOut, check, err := convert(data)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR parsing %s: %v\n", srcPath, err)
 			stats.errors++
@@ -125,12 +125,12 @@ func exportDir(binPath, subdir, outDir string, verify bool, convert convertFunc,
 		}
 
 		if verify {
-			switch recompiled, rerr := recompile(jsonOut); {
-			case rerr != nil:
-				fmt.Fprintf(os.Stderr, "VERIFY FAILED %s: recompile error: %v\n", srcPath, rerr)
-				stats.verifyMismatch++
-			case !bytes.Equal(recompiled, canonical):
-				fmt.Fprintf(os.Stderr, "VERIFY MISMATCH %s: recompiled output differs from parsed original (%d vs %d bytes)\n", srcPath, len(recompiled), len(canonical))
+			switch mismatch, cerr := check(jsonOut); {
+			case cerr != nil:
+				fmt.Fprintf(os.Stderr, "VERIFY FAILED %s: recompile error: %v\n", srcPath, cerr)
+				stats.verifyCompileErr++
+			case mismatch != "":
+				fmt.Fprintf(os.Stderr, "VERIFY MISMATCH %s: %s\n", srcPath, mismatch)
 				stats.verifyMismatch++
 			default:
 				stats.verifyOK++
@@ -152,34 +152,122 @@ func exportDir(binPath, subdir, outDir string, verify bool, convert convertFunc,
 	}
 }
 
-func exportQuest(raw []byte) ([]byte, []byte, func([]byte) ([]byte, error), error) {
-	// Quest .bin files are whole-file JKR-compressed on disk (see
-	// handlers_quest.go's loadQuestFile, which does the same unpack before
-	// parsing); UnpackSimple is a no-op if the data isn't actually JKR data.
-	data := decryption.UnpackSimple(raw)
+// exportQuest converts a quest. Quest .bin files are whole-file
+// JKR-compressed on disk (see handlers_quest.go's loadQuestFile, which does
+// the same unpack before parsing). --verify compares what the client reads
+// from the original and the recompiled file (channelserver.ClientQuestView),
+// since sections may be placed differently.
+func exportQuest(raw []byte) ([]byte, verifyFunc, error) {
+	data := decryption.UnpackSimple(raw) // no-op if the data isn't JKR
 	q, err := channelserver.ParseQuestBinary(data)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	jsonOut, err := json.MarshalIndent(q, "", "  ")
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
-	recompile := func(j []byte) ([]byte, error) { return channelserver.CompileQuestJSON(j, "") }
-	return jsonOut, data, recompile, nil
+	verify := func(j []byte) (string, error) {
+		recompiled, err := channelserver.CompileQuestJSON(j, "")
+		if err != nil {
+			return "", err
+		}
+		return diffQuestViews(data, recompiled), nil
+	}
+	return jsonOut, verify, nil
 }
 
-func exportScenario(data []byte) ([]byte, []byte, func([]byte) ([]byte, error), error) {
+// diffQuestViews compares what the client reads from two quest files and
+// describes the first difference ("" if none). Original data no section
+// reaches counts as a difference: the JSON can't carry it.
+func diffQuestViews(orig, recompiled []byte) string {
+	want, err := channelserver.ClientQuestView(orig)
+	if err != nil {
+		return "original: " + err.Error()
+	}
+	got, err := channelserver.ClientQuestView(recompiled)
+	if err != nil {
+		return "recompiled: " + err.Error()
+	}
+	if d := channelserver.DiffQuestViews(want, got); d != "" {
+		return d
+	}
+	if n := len(want.Unread); n > 0 {
+		return fmt.Sprintf("%d original bytes no section reads (first at 0x%X)", n, want.Unread[0])
+	}
+	return ""
+}
+
+// exportScenario converts a scenario. The container isn't compressed but
+// some chunks are, and a recompressed chunk needn't match the retail
+// encoder's bytes, so --verify compares the chunks after decompression.
+func exportScenario(data []byte) ([]byte, verifyFunc, error) {
 	s, err := channelserver.ParseScenarioBinary(data)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	jsonOut, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
-	recompile := func(j []byte) ([]byte, error) { return channelserver.CompileScenarioJSON(j, "") }
-	return jsonOut, data, recompile, nil
+	verify := func(j []byte) (string, error) {
+		recompiled, err := channelserver.CompileScenarioJSON(j, "")
+		if err != nil {
+			return "", err
+		}
+		return diffScenarioChunks(data, recompiled), nil
+	}
+	return jsonOut, verify, nil
+}
+
+// diffScenarioChunks compares two scenario containers chunk by chunk, after
+// JKR decompression, and describes the first difference ("" if none).
+func diffScenarioChunks(orig, recompiled []byte) string {
+	a, err := scenarioChunks(orig)
+	if err != nil {
+		return "original: " + err.Error()
+	}
+	b, err := scenarioChunks(recompiled)
+	if err != nil {
+		return "recompiled: " + err.Error()
+	}
+	for i := range a {
+		if !bytes.Equal(a[i], b[i]) {
+			return fmt.Sprintf("chunk%d differs (%d vs %d bytes decompressed)", i, len(b[i]), len(a[i]))
+		}
+	}
+	return ""
+}
+
+// scenarioChunks splits a scenario container (see docs/scenario-format.md)
+// into its three chunks, decompressing JKR ones. Absent chunks are nil.
+func scenarioChunks(data []byte) ([3][]byte, error) {
+	var chunks [3][]byte
+	if len(data) < 8 {
+		return chunks, fmt.Errorf("container too short: %d bytes", len(data))
+	}
+	c0 := int(binary.BigEndian.Uint32(data[0:4]))
+	c1 := int(binary.BigEndian.Uint32(data[4:8]))
+	if c0 < 0 || c1 < 0 || 8+c0+c1 > len(data) {
+		return chunks, fmt.Errorf("chunk sizes %d+%d overrun %d bytes", c0, c1, len(data))
+	}
+	chunks[0] = data[8 : 8+c0]
+	chunks[1] = data[8+c0 : 8+c0+c1]
+	if rest := data[8+c0+c1:]; len(rest) >= 4 {
+		c2 := int(binary.BigEndian.Uint32(rest[0:4]))
+		if c2 < 0 || 4+c2 > len(rest) {
+			return chunks, fmt.Errorf("chunk2 size %d overruns %d bytes", c2, len(rest)-4)
+		}
+		chunks[2] = rest[4 : 4+c2]
+	}
+	for i := range chunks {
+		if len(chunks[i]) > 0 {
+			chunks[i] = decryption.UnpackSimple(chunks[i])
+		} else {
+			chunks[i] = nil
+		}
+	}
+	return chunks, nil
 }
 
 // ── manifest ─────────────────────────────────────────────────────────────
