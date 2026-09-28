@@ -11,7 +11,7 @@ import (
 // trip on the full retail set when #40 was opened. Raise it as the JSON
 // formats become lossless; the goal is ok == files.
 var retailBaseline = map[string]struct{ files, ok int }{
-	"quests":    {54977, 0},
+	"quests":    {54977, 54964},
 	"scenarios": {145376, 9166},
 }
 
@@ -57,7 +57,7 @@ func TestRetailRoundTrip(t *testing.T) {
 					compileErrs++
 				case mismatch != "":
 					mismatches++
-					reasons[strings.SplitN(mismatch, " (", 2)[0]]++
+					reasons[strings.TrimLeft(strings.SplitN(mismatch, " (", 2)[0], "0123456789 ")]++
 				default:
 					ok++
 				}

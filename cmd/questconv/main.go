@@ -154,8 +154,9 @@ func exportDir(binPath, subdir, outDir string, verify bool, convert convertFunc,
 
 // exportQuest converts a quest. Quest .bin files are whole-file
 // JKR-compressed on disk (see handlers_quest.go's loadQuestFile, which does
-// the same unpack before parsing), while CompileQuestJSON produces the raw
-// layout, so --verify compares against the decompressed original.
+// the same unpack before parsing). --verify compares what the client reads
+// from the original and the recompiled file (channelserver.ClientQuestView),
+// since sections may be placed differently.
 func exportQuest(raw []byte) ([]byte, verifyFunc, error) {
 	data := decryption.UnpackSimple(raw) // no-op if the data isn't JKR
 	q, err := channelserver.ParseQuestBinary(data)
@@ -171,12 +172,30 @@ func exportQuest(raw []byte) ([]byte, verifyFunc, error) {
 		if err != nil {
 			return "", err
 		}
-		if !bytes.Equal(recompiled, data) {
-			return fmt.Sprintf("recompiled output differs from parsed original (%d vs %d bytes)", len(recompiled), len(data)), nil
-		}
-		return "", nil
+		return diffQuestViews(data, recompiled), nil
 	}
 	return jsonOut, verify, nil
+}
+
+// diffQuestViews compares what the client reads from two quest files and
+// describes the first difference ("" if none). Original data no section
+// reaches counts as a difference: the JSON can't carry it.
+func diffQuestViews(orig, recompiled []byte) string {
+	want, err := channelserver.ClientQuestView(orig)
+	if err != nil {
+		return "original: " + err.Error()
+	}
+	got, err := channelserver.ClientQuestView(recompiled)
+	if err != nil {
+		return "recompiled: " + err.Error()
+	}
+	if d := channelserver.DiffQuestViews(want, got); d != "" {
+		return d
+	}
+	if n := len(want.Unread); n > 0 {
+		return fmt.Sprintf("%d original bytes no section reads (first at 0x%X)", n, want.Unread[0])
+	}
+	return ""
 }
 
 // exportScenario converts a scenario. The container isn't compressed but
