@@ -68,9 +68,9 @@ func TestCompileQuestJSON_MinimalQuest(t *testing.T) {
 		t.Fatal("empty output")
 	}
 
-	// Header check: first pointer (questTypeFlagsPtr) must equal headerSize+genPropSize = 0x86
+	// Header check: main quest properties follow the 0xC0-byte header.
 	questTypeFlagsPtr := binary.LittleEndian.Uint32(data[0:4])
-	const expectedBodyStart = uint32(68 + 66) // 0x86
+	const expectedBodyStart = uint32(questHeaderSize)
 	if questTypeFlagsPtr != expectedBodyStart {
 		t.Errorf("questTypeFlagsPtr = 0x%X, want 0x%X", questTypeFlagsPtr, expectedBodyStart)
 	}
@@ -280,12 +280,14 @@ func TestParseQuestBinary_MinimalQuest(t *testing.T) {
 		t.Errorf("ObjectiveSubB.Type = %q, want none", q.ObjectiveSubB.Type)
 	}
 
-	// Stages
-	if len(q.Stages) != 1 {
-		t.Fatalf("Stages len = %d, want 1", len(q.Stages))
+	// Stages: one per player, the given stage repeated.
+	if len(q.Stages) != questStageCount {
+		t.Fatalf("Stages len = %d, want %d", len(q.Stages), questStageCount)
 	}
-	if q.Stages[0].StageID != 2 {
-		t.Errorf("Stages[0].StageID = %d, want 2", q.Stages[0].StageID)
+	for i, st := range q.Stages {
+		if st.StageID != 2 {
+			t.Errorf("Stages[%d].StageID = %d, want 2", i, st.StageID)
+		}
 	}
 
 	// Supply box
@@ -793,237 +795,71 @@ func TestRoundTrip_AllSections(t *testing.T) {
 
 // ── Golden file test ─────────────────────────────────────────────────────────
 //
-// This test manually constructs expected binary bytes at specific offsets and
-// verifies the compiler produces them exactly for minimalQuestJSON.
-// Hard-coded values are derived from the documented binary layout.
-//
-// Layout constants for minimalQuestJSON:
-//
-//	headerSize      = 68   (0x44)
-//	genPropSize     = 66   (0x42)
-//	mainPropOffset  = 0x86 (= headerSize + genPropSize)
-//	questStringsPtr = 0x1C6 (= mainPropOffset + 320)
+// TestGolden_MinimalQuestBinaryLayout checks the structure the client relies
+// on (see quest_json_ext.go) for minimalQuestJSON: a 0xC0-byte header, the
+// main quest properties right after it, no null pointer where the client
+// dereferences without checking, and the retail large monster block shape.
 func TestGolden_MinimalQuestBinaryLayout(t *testing.T) {
 	data, err := CompileQuestJSON([]byte(minimalQuestJSON), "")
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
+	u32 := func(off int) uint32 { return binary.LittleEndian.Uint32(data[off:]) }
 
-	const (
-		mainPropOffset  = 0x86
-		questStringsPtr = uint32(mainPropOffset + questBodyLenZZ) // 0x1C6
-	)
-
-	// ── Header (0x00–0x43) ───────────────────────────────────────────────
-	assertU32(t, data, 0x00, mainPropOffset, "questTypeFlagsPtr")
-	assertU16(t, data, 0x10, 0, "subSupplyBoxPtr (unused)")
-	assertByte(t, data, 0x12, 0, "hidden")
-	assertByte(t, data, 0x13, 0, "subSupplyBoxLen")
-	assertU32(t, data, 0x14, 0, "questAreaPtr (null)")
-	assertU32(t, data, 0x1C, 0, "areaTransitionsPtr (null)")
-	assertU32(t, data, 0x20, 0, "areaMappingPtr (null)")
-	assertU32(t, data, 0x24, 0, "mapInfoPtr (null)")
-	assertU32(t, data, 0x28, 0, "gatheringPointsPtr (null)")
-	assertU32(t, data, 0x2C, 0, "areaFacilitiesPtr (null)")
-	assertU32(t, data, 0x30, 0, "someStringsPtr (null)")
-	assertU32(t, data, 0x38, 0, "gatheringTablesPtr (null)")
-	assertU32(t, data, 0x3C, 0, "fixedCoords2Ptr (null)")
-	assertU32(t, data, 0x40, 0, "fixedInfoPtr (null)")
-
-	loadedStagesPtr := binary.LittleEndian.Uint32(data[0x04:])
-	unk34Ptr := binary.LittleEndian.Uint32(data[0x34:])
-	if unk34Ptr != loadedStagesPtr+16 {
-		t.Errorf("unk34Ptr 0x%X != loadedStagesPtr+16 (0x%X); expected exactly 1 stage × 16 bytes",
-			unk34Ptr, loadedStagesPtr+16)
+	assertU32(t, data, 0x00, questHeaderSize, "questTypeFlagsPtr")
+	if u32(0x10)&0x80000000 == 0 {
+		t.Error("flow script pointer lacks the not-yet-swapped flag (bit 31)")
+	}
+	for _, off := range []int{0x04, 0x08, 0x0C, 0x14, 0x18, 0x1C, 0x20, 0x24, 0x28, 0x2C, 0x30, 0x34, 0x38, 0x3C, 0x40} {
+		if p := u32(off); p < questHeaderSize || int(p) > len(data) {
+			t.Errorf("header pointer @ 0x%02X = 0x%X, want a section in the file", off, p)
+		}
 	}
 
-	// ── General Quest Properties (0x44–0x85) ────────────────────────────
+	// General quest properties.
 	assertU16(t, data, 0x44, 100, "monsterSizeMulti")
-	assertU16(t, data, 0x46, 0, "sizeRange")
-	assertU32(t, data, 0x48, 0, "statTable1")
 	assertU32(t, data, 0x4C, 120, "mainRankPoints")
-	assertU32(t, data, 0x50, 0, "unknown@0x50")
 	assertU32(t, data, 0x54, 60, "subARankPoints")
-	assertU32(t, data, 0x58, 0, "subBRankPoints")
-	assertU32(t, data, 0x5C, 0, "questTypeID@0x5C")
-	assertByte(t, data, 0x60, 0, "padding@0x60")
-	assertByte(t, data, 0x61, 0, "statTable2")
-	// 0x62–0x72: padding (17 bytes of zeros)
-	for i := 0x62; i <= 0x72; i++ {
-		assertByte(t, data, i, 0, "padding")
-	}
-	assertByte(t, data, 0x73, 0, "questKn1")
-	assertU16(t, data, 0x74, 0, "questKn2")
-	assertU16(t, data, 0x76, 0, "questKn3")
-	assertU16(t, data, 0x78, 0, "gatheringTablesQty")
-	assertByte(t, data, 0x7C, 0, "area1Zones")
-	assertByte(t, data, 0x7D, 0, "area2Zones")
-	assertByte(t, data, 0x7E, 0, "area3Zones")
-	assertByte(t, data, 0x7F, 0, "area4Zones")
-
-	// ── Main Quest Properties (0x86–0x1C5) ──────────────────────────────
-	mp := mainPropOffset
-	assertByte(t, data, mp+0x00, 0, "mp.unknown@+0x00")
-	assertByte(t, data, mp+0x01, 0, "mp.musicMode")
-	assertByte(t, data, mp+0x02, 0, "mp.localeFlags")
-	assertByte(t, data, mp+0x08, 0, "mp.rankBand lo") // rankBand = 0
-	assertByte(t, data, mp+0x09, 0, "mp.rankBand hi")
-	// questFee = 500 → LE bytes: 0xF4 0x01 0x00 0x00
-	assertU32(t, data, mp+0x0C, 500, "mp.questFee")
-	// rewardMain = 5000 → LE: 0x88 0x13 0x00 0x00
-	assertU32(t, data, mp+0x10, 5000, "mp.rewardMain")
-	assertU32(t, data, mp+0x14, 0, "mp.cartsOrReduction")
-	// rewardA = 1000 → LE: 0xE8 0x03
-	assertU16(t, data, mp+0x18, 1000, "mp.rewardA")
-	assertU16(t, data, mp+0x1A, 0, "mp.padding@+0x1A")
-	assertU16(t, data, mp+0x1C, 0, "mp.rewardB")
-	assertU16(t, data, mp+0x1E, 0, "mp.hardHRReq")
-	// questTime = 50 × 60 × 30 = 90000 → LE: 0x10 0x5F 0x01 0x00
-	assertU32(t, data, mp+0x20, 90000, "mp.questTime")
-	assertU32(t, data, mp+0x24, 2, "mp.questMap")
-	assertU32(t, data, mp+0x28, uint32(questStringsPtr), "mp.questStringsPtr")
-	assertU16(t, data, mp+0x2C, 0, "mp.unknown@+0x2C")
-	assertU16(t, data, mp+0x2E, 1, "mp.questID")
-
-	// Objective[0]: hunt, target=11, count=1
-	assertU32(t, data, mp+0x30, questObjHunt, "obj[0].goalType")
-	assertByte(t, data, mp+0x34, 11, "obj[0].target")
-	assertByte(t, data, mp+0x35, 0, "obj[0].pad")
-	assertU16(t, data, mp+0x36, 1, "obj[0].count")
-
-	// Objective[1]: deliver, target=149, count=3
-	assertU32(t, data, mp+0x38, questObjDeliver, "obj[1].goalType")
-	assertU16(t, data, mp+0x3C, 149, "obj[1].target")
-	assertU16(t, data, mp+0x3E, 3, "obj[1].count")
-
-	// Objective[2]: none
-	assertU32(t, data, mp+0x40, questObjNone, "obj[2].goalType")
-	assertU32(t, data, mp+0x44, 0, "obj[2].trailing pad")
-
-	assertU16(t, data, mp+0x4C, 0, "mp.joinRankMin")
-	assertU16(t, data, mp+0x4E, 0, "mp.joinRankMax")
-	assertU16(t, data, mp+0x50, 0, "mp.postRankMin")
-	assertU16(t, data, mp+0x52, 0, "mp.postRankMax")
-
-	// forced equip: 6 slots × 4 × 2 = 48 bytes, all zero
-	for i := 0; i < 48; i++ {
-		assertByte(t, data, mp+0x5C+i, 0, "forced equip zero")
+	assertU16(t, data, 0x76, 0, "flow script length")
+	for off := 0x7C; off <= 0x7F; off++ {
+		assertByte(t, data, off, 0, "zone count")
 	}
 
-	assertByte(t, data, mp+0x97, 0, "mp.questVariant1")
-	assertByte(t, data, mp+0x98, 0, "mp.questVariant2")
-	assertByte(t, data, mp+0x99, 0, "mp.questVariant3")
-	assertByte(t, data, mp+0x9A, 0, "mp.questVariant4")
+	// Main quest properties.
+	mp := questHeaderSize
+	assertU16(t, data, mp+0x2E, 1, "questID")
+	assertU32(t, data, mp+0x20, 90000, "questTime (50 min)")
+	assertU32(t, data, mp+0x30, questObjHunt, "main objective type")
+	assertU16(t, data, mp+0x34, 11, "main objective target")
 
-	// ── QuestText pointer table (0x1C6–0x1E5) ───────────────────────────
-	for i := 0; i < 8; i++ {
-		off := int(questStringsPtr) + i*4
-		strPtr := int(binary.LittleEndian.Uint32(data[off:]))
-		if strPtr < 0 || strPtr >= len(data) {
-			t.Errorf("string[%d] ptr 0x%X out of bounds (len=%d)", i, strPtr, len(data))
-		}
-	}
-
-	// Title pointer → "Test Quest"
-	titlePtr := int(binary.LittleEndian.Uint32(data[int(questStringsPtr):]))
-	end := titlePtr
-	for end < len(data) && data[end] != 0 {
-		end++
-	}
-	if string(data[titlePtr:end]) != "Test Quest" {
-		t.Errorf("title bytes = %q, want %q", data[titlePtr:end], "Test Quest")
+	// 4 stages, one per player: the one given, repeated.
+	st := int(u32(0x04))
+	for i := 0; i < questStageCount; i++ {
+		assertU32(t, data, st+i*16, 2, "stage id")
 	}
 
-	// ── Stage entry (1 stage: stageID=2) ────────────────────────────────
-	assertU32(t, data, int(loadedStagesPtr), 2, "stage[0].stageID")
-	for i := 1; i < 16; i++ {
-		assertByte(t, data, int(loadedStagesPtr)+i, 0, "stage padding")
+	// Large monsters: one section, a zero terminator, 8 IDs, 6 spawn slots.
+	lm := int(u32(0x18))
+	assertU32(t, data, lm, 1, "large monster section stage")
+	assertU32(t, data, lm+16, 0, "section list terminator")
+	ids := int(u32(lm + 8))
+	assertU32(t, data, ids, 11, "large monster id[0]")
+	assertU32(t, data, ids+20, 0xFFFFFFFF, "large monster id[5]")
+	spawns := int(u32(lm + 12))
+	assertU16(t, data, spawns, 11, "spawn[0].monster")
+	assertU32(t, data, spawns+0x1C, 180, "spawn[0].orientation")
+	for slot := 1; slot < questLargeMonsterSlots; slot++ {
+		assertU16(t, data, spawns+slot*questSpawnEntrySize, 0xFFFF, "unused spawn slot")
 	}
 
-	// ── Supply box: main[0] = {item:1, qty:5} ───────────────────────────
-	supplyBoxPtr := int(binary.LittleEndian.Uint32(data[0x08:]))
-	assertU16(t, data, supplyBoxPtr, 1, "supply_main[0].item")
-	assertU16(t, data, supplyBoxPtr+2, 5, "supply_main[0].quantity")
-	for i := 1; i < 24; i++ {
-		assertU32(t, data, supplyBoxPtr+i*4, 0, "supply_main slot empty")
-	}
-	subABase := supplyBoxPtr + 24*4
-	for i := 0; i < 8; i++ {
-		assertU32(t, data, subABase+i*4, 0, "supply_subA slot empty")
-	}
-	subBBase := subABase + 8*4
-	for i := 0; i < 8; i++ {
-		assertU32(t, data, subBBase+i*4, 0, "supply_subB slot empty")
-	}
+	// Lists the client walks without a null check end at once when empty.
+	assertU32(t, data, int(u32(0x14)), 0, "quest area list terminator")
+	assertU16(t, data, int(u32(0x34)), 0xFFFF, "respawn list terminator")
+	assertU32(t, data, int(u32(0x30)), 0, "message list terminator")
+	assertU32(t, data, int(u32(0x3C)), 0, "fishing spot list terminator")
 
-	// ── Reward table ────────────────────────────────────────────────────
-	rewardPtr := int(binary.LittleEndian.Uint32(data[0x0C:]))
-	assertByte(t, data, rewardPtr, 1, "reward header[0].tableID")
-	assertByte(t, data, rewardPtr+1, 0, "reward header[0].pad1")
-	assertU16(t, data, rewardPtr+2, 0, "reward header[0].pad2")
-	// headerArraySize = 1×8 + 2 = 10; tableOffset is absolute (rewardPtr + 10)
-	assertU32(t, data, rewardPtr+4, uint32(rewardPtr+10), "reward header[0].tableOffset")
-	assertU16(t, data, rewardPtr+8, 0xFFFF, "reward header terminator")
-	itemsBase := rewardPtr + 10
-	assertU16(t, data, itemsBase, 50, "reward[0].items[0].rate")
-	assertU16(t, data, itemsBase+2, 149, "reward[0].items[0].item")
-	assertU16(t, data, itemsBase+4, 1, "reward[0].items[0].quantity")
-	assertU16(t, data, itemsBase+6, 30, "reward[0].items[1].rate")
-	assertU16(t, data, itemsBase+8, 153, "reward[0].items[1].item")
-	assertU16(t, data, itemsBase+10, 1, "reward[0].items[1].quantity")
-	assertU16(t, data, itemsBase+12, 0xFFFF, "reward item terminator")
-
-	// ── Large monster pointer block ──────────────────────────────────────
-	largeMonsterPtr := int(binary.LittleEndian.Uint32(data[0x18:]))
-	assertU32(t, data, largeMonsterPtr, 1, "monsterBlock.header lo (retail constant)")
-	assertU32(t, data, largeMonsterPtr+4, 0, "monsterBlock.header hi")
-	idsPtr := int(binary.LittleEndian.Uint32(data[largeMonsterPtr+8:]))
-	spawnsPtr := int(binary.LittleEndian.Uint32(data[largeMonsterPtr+12:]))
-	if idsPtr != largeMonsterPtr+16 {
-		t.Errorf("monsterIDsPtr = 0x%X, want 0x%X", idsPtr, largeMonsterPtr+16)
-	}
-	if spawnsPtr != idsPtr+maxLargeMonsters*4 {
-		t.Errorf("monsterSpawnsPtr = 0x%X, want 0x%X", spawnsPtr, idsPtr+maxLargeMonsters*4)
-	}
-
-	// IDs array: slot 0 used (id=11), remaining slots zero.
-	assertByte(t, data, idsPtr, 11, "monsterIDs[0]")
-	for i := 1; i < maxLargeMonsters; i++ {
-		assertU32(t, data, idsPtr+i*4, 0, "monsterIDs unused slot")
-	}
-
-	// Spawn array: slot 0 populated.
-	assertByte(t, data, spawnsPtr, 11, "monster[0].id")
-	assertByte(t, data, spawnsPtr+1, 0, "monster[0].pad1")
-	assertByte(t, data, spawnsPtr+2, 0, "monster[0].pad2")
-	assertByte(t, data, spawnsPtr+3, 0, "monster[0].pad3")
-	assertU32(t, data, spawnsPtr+4, 1, "monster[0].spawnAmount")
-	assertU32(t, data, spawnsPtr+8, 5, "monster[0].spawnStage")
-	for i := 0; i < 16; i++ {
-		assertByte(t, data, spawnsPtr+0x0C+i, 0, "monster[0].pad16")
-	}
-	assertU32(t, data, spawnsPtr+0x1C, 180, "monster[0].orientation")
-	assertF32(t, data, spawnsPtr+0x20, 1500.0, "monster[0].x")
-	assertF32(t, data, spawnsPtr+0x24, 0.0, "monster[0].y")
-	assertF32(t, data, spawnsPtr+0x28, -2000.0, "monster[0].z")
-	for i := 0; i < 16; i++ {
-		assertByte(t, data, spawnsPtr+0x2C+i, 0, "monster[0].trailing_pad")
-	}
-
-	// Remaining slots: unused sentinel, matching retail exactly (0xFFFF then zero-fill).
-	for slot := 1; slot < maxLargeMonsters; slot++ {
-		base := spawnsPtr + slot*60
-		assertByte(t, data, base, 0xFF, "monster[unused].id")
-		assertByte(t, data, base+1, 0xFF, "monster[unused].fill1")
-		for i := 2; i < 60; i++ {
-			assertByte(t, data, base+i, 0, "monster[unused].fill")
-		}
-	}
-
-	// ── Total file size ──────────────────────────────────────────────────
-	minExpectedLen := spawnsPtr + maxLargeMonsters*60
-	if len(data) < minExpectedLen {
-		t.Errorf("file too short: len=%d, need at least %d", len(data), minExpectedLen)
+	if _, err := ClientQuestView(data); err != nil {
+		t.Errorf("client view: %v", err)
 	}
 }
 
@@ -1033,6 +869,8 @@ func TestGolden_GeneralQuestPropertiesCounts(t *testing.T) {
 	var q QuestJSON
 	_ = json.Unmarshal([]byte(minimalQuestJSON), &q)
 	q.AreaTransitions = []QuestAreaTransitionsJSON{{}, {}, {}}
+	q.AreaMappings = []QuestAreaMappingJSON{{}, {}}
+	q.GatheringPoints = []QuestAreaGatheringJSON{{}}
 	q.GatheringTables = []QuestGatheringTableJSON{
 		{Items: []QuestGatherItemJSON{{Rate: 100, Item: 1}}},
 		{Items: []QuestGatherItemJSON{{Rate: 100, Item: 2}}},
@@ -1044,8 +882,11 @@ func TestGolden_GeneralQuestPropertiesCounts(t *testing.T) {
 		t.Fatalf("compile: %v", err)
 	}
 
-	// area1Zones at 0x7C should be 3.
-	assertByte(t, data, 0x7C, 3, "area1Zones")
+	// Each zone list has its own count.
+	assertByte(t, data, 0x7C, 2, "area mapping count")
+	assertByte(t, data, 0x7D, 0, "facility zone count")
+	assertByte(t, data, 0x7E, 1, "gathering zone count")
+	assertByte(t, data, 0x7F, 3, "transition zone count")
 	// gatheringTablesQty at 0x78 should be 2.
 	assertU16(t, data, 0x78, 2, "gatheringTablesQty")
 }
@@ -1310,18 +1151,6 @@ func assertU32(t *testing.T, data []byte, off int, want uint32, label string) {
 	}
 }
 
-func assertF32(t *testing.T, data []byte, off int, want float32, label string) {
-	t.Helper()
-	if off+4 > len(data) {
-		t.Errorf("%s @ 0x%X: out of bounds (len=%d)", label, off, len(data))
-		return
-	}
-	got := math.Float32frombits(binary.LittleEndian.Uint32(data[off:]))
-	if got != want {
-		t.Errorf("%s @ 0x%X: got %v, want %v", label, off, got, want)
-	}
-}
-
 // ── Phase B: localized quest text (#188) ─────────────────────────────────────
 
 // localizedQuestJSON exercises the LocalizedString schema — title is a map,
@@ -1367,9 +1196,9 @@ var localizedQuestJSON = `{
 // replicating the full binary layout.
 func extractQuestTitle(t *testing.T, data []byte) string {
 	t.Helper()
-	// Header offset 0x00 is the first pointer = questTypeFlagsPtr = 0x86.
-	// QuestStringsTablePtr is at headerSize + genPropSize + mainPropSize.
-	const questStringsTableOff = 68 + 66 + questBodyLenZZ // 0x1C6
+	// The quest text table pointer is at main quest properties + 0x28.
+	mainPtr := binary.LittleEndian.Uint32(data[0:])
+	questStringsTableOff := int(binary.LittleEndian.Uint32(data[mainPtr+0x28:]))
 	if questStringsTableOff+4 > len(data) {
 		t.Fatalf("data too short for quest strings table: %d", len(data))
 	}

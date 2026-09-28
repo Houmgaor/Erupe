@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Quest JSON carries every section the client reads (#40), recovered from the Wii U client's quest loader: the quest flow script, flow messages, monster respawn points, fishing spots and fish catch tables, player start positions, the full quest area (3 groups of map sections), and the header and main-property fields that were dropped (`header_ext`, `main_ext`, and the `unk_*` fields of spawns, stages, rewards, area mappings, gathering points and facilities). On the full retail set, 54,964 of 54,977 quests now round-trip `.bin` → JSON → `.bin` with the same data for the client; the rest hold unreachable leftovers. Layout in `docs/quest-file-format.md`.
+
 ### Fixed
 
 - Quest loading slow since 9.5.0 on installs that keep their data in `bin/` (#38): the data directory was re-resolved on every quest, scenario and save load, each time reading the whole `bin/quests` listing (about 55,000 files, ~15 ms per call), so a quest board page after a restart could time out. The directory is now resolved once at config load, and the check stops at the first file. Workaround on older versions: set `"BinPath": "./bin"`.
+- Quests compiled from JSON now have the structure the client expects: a 0xC0-byte header (the main quest properties overlapped header fields 0x86–0xBF), separate counts for area mappings, facilities, gathering points and transitions (0x7D–0x7F were written as 0), terminated large monster and map section lists, and valid pointers for the quest area, messages, respawn points and fishing spots (null, or pointing into the supply box, before). Roman numerals Ⅰ–Ⅹ are written with the CP932 codes retail text uses.
+
+### Changed
+
+- `questconv export --verify` compares what the client reads from the original and recompiled quest (`ClientQuestView`, independent of section placement) and reports original data no section reads; it compares scenarios chunk by chunk after JKR decompression, so a recompressed chunk no longer counts as a mismatch, and reports recompile errors (`verify_compile_error`) apart from content mismatches. New opt-in `TestRetailRoundTrip` (`ERUPE_RETAIL_BIN=<dir>`) measures the `.bin` → JSON → `.bin` round trip on real data against a recorded baseline: 54,964 of 54,977 quests and 9,166 of 145,376 scenarios survive (#40).
 
 ### Removed
 
