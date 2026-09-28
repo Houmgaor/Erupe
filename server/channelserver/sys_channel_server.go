@@ -368,9 +368,11 @@ func (s *Server) manageSessions() {
 
 func (s *Server) getObjectId() uint16 {
 	ids := make(map[uint16]struct{})
+	s.Lock()
 	for _, sess := range s.sessions {
 		ids[sess.objectID] = struct{}{}
 	}
+	s.Unlock()
 	for i := uint16(1); i < 100; i++ {
 		if _, ok := ids[i]; !ok {
 			return i
