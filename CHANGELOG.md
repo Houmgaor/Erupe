@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Quest loading slow since 9.5.0 on installs that keep their data in `bin/` (#38): the data directory was re-resolved on every quest, scenario and save load, each time reading the whole `bin/quests` listing (about 55,000 files, ~15 ms per call), so a quest board page after a restart could time out. The directory is now resolved once at config load, and the check stops at the first file. Workaround on older versions: set `"BinPath": "./bin"`.
+
 ### Removed
 
 - Releases no longer attach `SCHEMA.sql`: it was only the `0001` baseline, without the later migrations, and the schema is embedded in the binary and applied automatically.
