@@ -106,6 +106,10 @@ type Config struct {
 	API             API
 	Channel         Channel
 	Entrance        Entrance
+
+	// resolvedBinPath caches ResolveBinPath(BinPath), set once by LoadConfig:
+	// resolving "bin" checks bin/quests, too slow to repeat per request.
+	resolvedBinPath string
 }
 
 // DefaultBinPath is the directory new installs use for quest/scenario/road
@@ -122,8 +126,13 @@ const legacyBinPath = "bin"
 
 // ResolvedBinPath returns the directory Erupe should actually read
 // quest/scenario/road data from. See ResolveBinPath for the resolution
-// rule; this is the same logic, applied to this Config's BinPath.
+// rule; this is the same logic, applied to this Config's BinPath. The
+// result is computed once by LoadConfig; a Config built another way
+// resolves on each call.
 func (c *Config) ResolvedBinPath() string {
+	if c.resolvedBinPath != "" {
+		return c.resolvedBinPath
+	}
 	return ResolveBinPath(c.BinPath)
 }
 
@@ -168,17 +177,25 @@ func ResolveBinPath(configured string) string {
 // hasQuestData reports whether dir/quests/ contains at least one file,
 // mirroring the "found" definition the setup wizard already uses to check
 // for quest data (server/setup/wizard.go's checkQuestFiles).
+// It reads the directory in small batches and stops at the first file, since
+// a full quest set holds tens of thousands of entries.
 func hasQuestData(dir string) bool {
-	entries, err := os.ReadDir(filepath.Join(dir, "quests"))
+	f, err := os.Open(filepath.Join(dir, "quests"))
 	if err != nil {
 		return false
 	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			return true
+	defer func() { _ = f.Close() }()
+	for {
+		entries, err := f.ReadDir(64)
+		for _, e := range entries {
+			if !e.IsDir() {
+				return true
+			}
+		}
+		if err != nil {
+			return false
 		}
 	}
-	return false
 }
 
 type SaveDumpOptions struct {
@@ -667,6 +684,8 @@ func LoadConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	c.resolvedBinPath = ResolveBinPath(c.BinPath)
 
 	if c.Host == "" {
 		ip, err := getOutboundIP4()

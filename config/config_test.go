@@ -1,9 +1,12 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 // TestModeString tests the versionStrings array content
@@ -752,6 +755,83 @@ func TestResolveBinPath_EmptyLegacyBinDirIsIgnored(t *testing.T) {
 
 	if got := ResolveBinPath("bin"); got != DefaultBinPath {
 		t.Errorf("ResolveBinPath(\"bin\") with empty legacy dir = %q, want %q", got, DefaultBinPath)
+	}
+}
+
+func TestHasQuestData_SkipsSubdirectories(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		subdirs  int
+		withFile bool
+		want     bool
+	}{
+		{"subdirs only", 100, false, false},
+		{"file after many subdirs", 100, true, true},
+		{"file only", 0, true, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			quests := filepath.Join(dir, "quests")
+			for i := 0; i < tt.subdirs; i++ {
+				if err := os.MkdirAll(filepath.Join(quests, fmt.Sprintf("d%03d", i)), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.withFile {
+				if err := os.MkdirAll(quests, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(quests, "00001d0.bin"), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := hasQuestData(dir); got != tt.want {
+				t.Errorf("hasQuestData() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLoadConfig_ResolvesBinPathOnce guards against resolving the data
+// directory per request: on a legacy install that scans bin/quests, tens of
+// thousands of files, on every quest load (#38).
+func TestLoadConfig_ResolvesBinPathOnce(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
+
+	questFile := filepath.Join("bin", "quests", "00001d0.bin")
+	if err := os.MkdirAll(filepath.Dir(questFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(questFile, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeMinimalConfig(t, dir, `{"Host":"127.0.0.1","BinPath":"bin"}`)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.ResolvedBinPath(); got != "bin" {
+		t.Fatalf("ResolvedBinPath() = %q, want %q", got, "bin")
+	}
+
+	// Emptying bin/quests would change a fresh resolution to game-data;
+	// the loaded config must keep its answer without looking again.
+	if err := os.Remove(questFile); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.ResolvedBinPath(); got != "bin" {
+		t.Errorf("ResolvedBinPath() after load = %q, want %q (re-resolved per call)", got, "bin")
 	}
 }
 
