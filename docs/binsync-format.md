@@ -86,3 +86,9 @@ Three different code paths read quest/scenario/road data, with different stalene
 ## What this does *not* solve
 
 `binsync` verifies that data came from the manifest unmodified and that it's structurally valid — it does not vouch for the *quality* of the data itself. In particular, `questconv export --verify` round-trips each converted file back through the compiler and diffs it against the parsed original; a large or systematic mismatch (as opposed to occasional edge cases) means the source `.bin` files likely don't fully round-trip through the current `ParseQuestBinary`/`CompileQuestJSON` implementation yet (e.g. a client-version layout difference, or a section the parser doesn't recognize) and should be investigated before that data set is published — publishing a manifest doesn't imply the underlying conversion is complete.
+
+**Current state (#40): retail data does not round-trip yet.** On the full retail set, 0 of 54,977 quests and 9,166 of 145,376 scenarios survive `.bin` → JSON → `.bin`: the quest JSON drops several sections and header fields, and scenario JSON loses non-Shift-JIS bytes and part of the NPC dialog. Keep the `.bin` files as the reference copy. `--verify` compares quests as whole decompressed files and scenarios chunk by chunk after decompression, and counts recompile errors apart from mismatches. To measure a data set against the recorded baseline:
+
+```bash
+ERUPE_RETAIL_BIN=game-data go test ./cmd/questconv -run TestRetailRoundTrip -v
+```

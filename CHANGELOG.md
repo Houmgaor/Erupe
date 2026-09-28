@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `questconv export --verify` compares scenarios chunk by chunk after JKR decompression, so a recompressed chunk no longer counts as a mismatch, and reports recompile errors (`verify_compile_error`) apart from content mismatches. New opt-in `TestRetailRoundTrip` (`ERUPE_RETAIL_BIN=<dir>`) measures the `.bin` → JSON → `.bin` round trip on real data against a recorded baseline: today 0 of 54,977 quests and 9,166 of 145,376 scenarios survive (#40).
+
 ### Removed
 
 - Releases no longer attach `SCHEMA.sql`: it was only the `0001` baseline, without the later migrations, and the schema is embedded in the binary and applied automatically.
