@@ -79,8 +79,12 @@ type Session struct {
 	// A value of -1 means no bead is currently assigned this session.
 	currentBeadIndex int
 
-	Name           string
-	closed         atomic.Bool
+	Name   string
+	closed atomic.Bool
+	// done is closed, once, when the session ends (see markClosed); sendLoop
+	// waits on it instead of polling closed.
+	done           chan struct{}
+	closeOnce      sync.Once
 	hidden         atomic.Bool // Set via MsgSysHideClient; excludes this session from MsgSysEnumerateClient's "All" results.
 	ackStart       map[uint32]time.Time
 	captureConn    *pcap.RecordingConn // non-nil when capture is active
@@ -99,6 +103,7 @@ func NewSession(server *Server, conn net.Conn) *Session {
 		rawConn:          conn,
 		cryptConn:        cryptConn,
 		sendPackets:      make(chan packet, 20),
+		done:             make(chan struct{}),
 		clientContext:    &clientctx.ClientContext{RealClientMode: server.erupeConfig.RealClientMode},
 		lastPacket:       time.Now(),
 		objectID:         server.getObjectId(),
@@ -232,24 +237,38 @@ func (s *Session) QueueAck(ackHandle uint32, data []byte) {
 	s.QueueSend(bf.Data())
 }
 
+// markClosed ends the session: recvLoop logs the player out on its next
+// iteration and sendLoop returns.
+func (s *Session) markClosed() {
+	s.closed.Store(true)
+	s.closeOnce.Do(func() {
+		if s.done != nil {
+			close(s.done)
+		}
+	})
+}
+
+// sendLoop sends queued packets, each with its own terminator, until the
+// session ends. It blocks rather than polling, so an idle or ended session
+// costs no CPU.
 func (s *Session) sendLoop() {
 	for {
-		if s.closed.Load() {
+		select {
+		case <-s.done:
 			return
-		}
-		// Send each packet individually with its own terminator
-		for len(s.sendPackets) > 0 {
-			pkt := <-s.sendPackets
+		case pkt := <-s.sendPackets:
 			err := s.cryptConn.SendPacket(append(pkt.data, []byte{0x00, 0x10}...))
 			if err != nil {
 				s.logger.Warn("Failed to send packet", zap.Error(err))
 			}
 		}
-		time.Sleep(time.Duration(s.server.erupeConfig.LoopDelay) * time.Millisecond)
 	}
 }
 
 func (s *Session) recvLoop() {
+	// However the loop ends (logout, EOF, error), end the session so
+	// sendLoop returns instead of outliving the connection.
+	defer s.markClosed()
 	for {
 		if s.closed.Load() {
 			// Graceful disconnect - client sent logout packet
@@ -325,7 +344,7 @@ func (s *Session) handlePacketGroup(pktGroup []byte) {
 	s.logMessage(opcodeUint16, pktGroup, s.Name, "Server")
 
 	if opcode == network.MSG_SYS_LOGOUT {
-		s.closed.Store(true)
+		s.markClosed()
 		return
 	}
 	// Get the packet parser and handler for this opcode.
