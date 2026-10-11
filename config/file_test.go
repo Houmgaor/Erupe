@@ -64,9 +64,9 @@ func TestSetKeysKeepsOrderAndSpelling(t *testing.T) {
 	}
 }
 
-// TestDeprecatedKeyIgnored: DisableSoftCrash was renamed because its name
-// was misleading. It sets nothing and is reported with its replacement.
-func TestDeprecatedKeyIgnored(t *testing.T) {
+// TestRetiredKeyIsUnknown: DisableSoftCrash, retired for a misleading name,
+// sets nothing, so the editor lists it with the other ignored keys.
+func TestRetiredKeyIsUnknown(t *testing.T) {
 	data := []byte(`{"DisableSoftCrash": true}`)
 	c, err := DecodeJSON(data)
 	if err != nil {
@@ -77,9 +77,6 @@ func TestDeprecatedKeyIgnored(t *testing.T) {
 	}
 	if got, _ := UnknownKeys(data); len(got) != 1 || got[0] != "DisableSoftCrash" {
 		t.Errorf("UnknownKeys = %v", got)
-	}
-	if Replacement("DisableSoftCrash") != "DisableShutdownCountdown" || Replacement("Host") != "" {
-		t.Error("wrong replacement")
 	}
 	if HasKey(data, "DisableShutdownCountdown") {
 		t.Error("the deprecated key must not count as the new option")

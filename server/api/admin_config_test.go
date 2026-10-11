@@ -61,9 +61,6 @@ func TestAdminGetConfig(t *testing.T) {
 	if len(st.UnknownKeys) != 2 || st.UnknownKeys[0] != "DisableSoftCrash" || st.UnknownKeys[1] != "GameplayOptions.MaxRP" {
 		t.Errorf("unknown keys %v", st.UnknownKeys)
 	}
-	if len(st.Replaced) != 1 || st.Replaced["DisableSoftCrash"] != "DisableShutdownCountdown" {
-		t.Errorf("replaced %v", st.Replaced)
-	}
 	if fieldState(t, st, "DisableShutdownCountdown").Set {
 		t.Error("the deprecated key must not count as setting DisableShutdownCountdown")
 	}

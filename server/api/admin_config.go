@@ -50,7 +50,6 @@ type ConfigState struct {
 	Editable    bool               `json:"editable"`            // false for non-JSON config files
 	FileError   string             `json:"fileError,omitempty"` // the file on disk no longer loads
 	UnknownKeys []string           `json:"unknownKeys"`         // keys Erupe ignores (typos, wrong section)
-	Replaced    map[string]string  `json:"replaced,omitempty"`  // deprecated unknown key -> option to use instead
 	Pending     bool               `json:"pending"`             // some saved change waits for a restart
 	Fields      []ConfigFieldState `json:"fields"`
 }
@@ -97,14 +96,6 @@ func (s *APIServer) configState(path string, data []byte) ConfigState {
 		}
 		if unknown, err := cfg.UnknownKeys(data); err == nil {
 			st.UnknownKeys = unknown
-			for _, key := range unknown {
-				if r := cfg.Replacement(key); r != "" {
-					if st.Replaced == nil {
-						st.Replaced = map[string]string{}
-					}
-					st.Replaced[key] = r
-				}
-			}
 		}
 		running, _ = cfg.DecodeJSON(s.erupeConfig.FileData)
 	}

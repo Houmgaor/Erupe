@@ -353,11 +353,6 @@ section>h2 .hint{color:var(--muted);font-weight:400;font-size:.8rem}
       state.unknownKeys.forEach(function (k, i) {
         if (i) u.appendChild(document.createTextNode(", "));
         u.appendChild(el("code", "", k));
-        if (state.replaced && state.replaced[k]) {
-          u.appendChild(document.createTextNode(" (deprecated, use "));
-          u.appendChild(el("code", "", state.replaced[k]));
-          u.appendChild(document.createTextNode(")"));
-        }
       });
       b.appendChild(u);
     }

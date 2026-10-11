@@ -114,11 +114,6 @@ func main() {
 		if unknown, err := cfg.UnknownKeys(config.FileData); err == nil && len(unknown) > 0 {
 			logger.Warn("config.json has keys Erupe does not recognise; they are ignored and the options they were meant for keep their defaults",
 				zap.Strings("keys", unknown))
-			for _, key := range unknown {
-				if r := cfg.Replacement(key); r != "" {
-					logger.Warn(fmt.Sprintf("config.json: %s is deprecated and ignored; use %s instead", key, r))
-				}
-			}
 		}
 	}
 

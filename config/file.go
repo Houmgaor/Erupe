@@ -15,18 +15,6 @@ import (
 // its default: UnknownKeys reports those, and SetKeys changes options while
 // keeping the operator's key spelling, key order and every other entry.
 
-// deprecatedKeys maps retired option names, lower-cased, to the option that
-// replaced them. They are ignored like any unknown key; knowing the
-// replacement lets the warning say what to use instead.
-var deprecatedKeys = map[string]string{
-	"disablesoftcrash": "DisableShutdownCountdown",
-}
-
-// Replacement returns the option that replaced a deprecated key, or "".
-func Replacement(key string) string {
-	return deprecatedKeys[strings.ToLower(key)]
-}
-
 // member is one key of a JSON object, with its value left undecoded.
 type member struct {
 	key string
