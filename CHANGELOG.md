@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Diva Defense interception reward list (felyne attendant, "Check & Claim Rewards") used a `u32` count and 12-byte entries; the client expects a header byte, `u16` counts, 11-byte entries and a ranking section, so it read past the response and corrupted the character's save (HR reset, garbled name) (#46).
+
 ## [9.6.1] - 2026-09-27
 
 ### Deprecated

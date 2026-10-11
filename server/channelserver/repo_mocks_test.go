@@ -1170,6 +1170,9 @@ type mockDivaRepo struct {
 	addErr   error
 	getErr   error
 	totalErr error
+
+	personalPrizes []DivaPrize
+	guildPrizes    []DivaPrize
 }
 
 func (m *mockDivaRepo) DeleteEvents() error             { return nil }
@@ -1225,8 +1228,8 @@ func (m *mockDivaRepo) GetCharacterBeadPoints(_ uint32) (map[int]int, error) {
 func (m *mockDivaRepo) GetTotalBeadPoints() (int64, error)      { return 0, nil }
 func (m *mockDivaRepo) GetTopBeadPerDay(_ int) (int, error)     { return 0, nil }
 func (m *mockDivaRepo) CleanupBeads() error                     { return nil }
-func (m *mockDivaRepo) GetPersonalPrizes() ([]DivaPrize, error) { return nil, nil }
-func (m *mockDivaRepo) GetGuildPrizes() ([]DivaPrize, error)    { return nil, nil }
+func (m *mockDivaRepo) GetPersonalPrizes() ([]DivaPrize, error) { return m.personalPrizes, nil }
+func (m *mockDivaRepo) GetGuildPrizes() ([]DivaPrize, error)    { return m.guildPrizes, nil }
 func (m *mockDivaRepo) GetCharacterInterceptionPoints(_ uint32) (map[string]int, error) {
 	return map[string]int{}, nil
 }
