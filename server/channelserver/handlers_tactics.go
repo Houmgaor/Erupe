@@ -88,28 +88,31 @@ func handleMsgMhfAddUdTacticsPoint(s *Session, p mhfpacket.MHFPacket) {
 	doAckSimpleSucceed(s, pkt.AckHandle, []byte{0x00, 0x00, 0x00, 0x00})
 }
 
+// writeDivaPrizeList writes one milestone track of the interception reward
+// list: u16 count, then per entry u32 points_req, u8 item_type, u16 item_id,
+// u16 quantity, u8 gr, u8 repeatable (11 bytes). Layout taken from the
+// original packet capture this handler replaced, which parses byte-exactly.
 func writeDivaPrizeList(bf *byteframe.ByteFrame, prizes []DivaPrize) {
-	bf.WriteUint32(uint32(len(prizes)))
+	bf.WriteUint16(uint16(len(prizes)))
 	for _, p := range prizes {
 		bf.WriteUint32(uint32(p.PointsReq))
-		bf.WriteUint16(uint16(p.ItemType))
+		bf.WriteUint8(uint8(p.ItemType))
 		bf.WriteUint16(uint16(p.ItemID))
 		bf.WriteUint16(uint16(p.Quantity))
-		if p.GR {
-			bf.WriteUint8(1)
-		} else {
-			bf.WriteUint8(0)
-		}
-		if p.Repeatable {
-			bf.WriteUint8(1)
-		} else {
-			bf.WriteUint8(0)
-		}
+		bf.WriteBool(p.GR)
+		bf.WriteBool(p.Repeatable)
 	}
 }
 
 func handleMsgMhfGetUdTacticsRewardList(s *Session, p mhfpacket.MHFPacket) {
-	// Diva defense interception reward list
+	// Diva defense interception reward list:
+	//   u8 unk (0)
+	//   personal track (interception points), guild track (acquired areas)
+	//   u16 count + count × 13-byte ranking entries:
+	//     u8 item_type, u16 item_id, u16 quantity, u32 rank_from, u32 rank_to
+	// The client reads all three sections; a short or misaligned response
+	// makes it read past the buffer, which corrupted character saves (HR,
+	// name) after opening the reward menu.
 	pkt := p.(*mhfpacket.MsgMhfGetUdTacticsRewardList)
 
 	personal, err := s.server.divaRepo.GetPersonalPrizes()
@@ -122,8 +125,10 @@ func handleMsgMhfGetUdTacticsRewardList(s *Session, p mhfpacket.MHFPacket) {
 	}
 
 	bf := byteframe.NewByteFrame()
+	bf.WriteUint8(0)
 	writeDivaPrizeList(bf, personal)
 	writeDivaPrizeList(bf, guild)
+	bf.WriteUint16(0) // ranking rewards: none configured
 
 	doAckBufSucceed(s, pkt.AckHandle, bf.Data())
 }
